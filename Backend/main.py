@@ -37,13 +37,13 @@ app.add_middleware(
 )
 
 # Retrieve API key securely
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_API_KEY = "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"
 if not OPENROUTER_API_KEY:
     raise ValueError("API Key not found! Set OPENROUTER_API_KEY in environment variables.")
 
 # Document types and required fields
 DOCUMENT_TYPES = {
-    "Guest Lecture": [
+    "GuestLecture": [
         "Guest Name",
         "Guest Designation",
         "Event Date",
@@ -277,6 +277,7 @@ async def generate_content(request: DocumentRequest):
         system_prompt = create_system_prompt()
         user_prompt = create_user_prompt(request.fields)
 
+        
         # OpenRouter API request
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",

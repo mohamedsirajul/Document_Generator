@@ -1,7 +1,6 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { FileText, ArrowRight, CheckCircle, X, Send, FileTextIcon } from 'lucide-react';
-import { DocumentGenerateModal } from './DocumentGenerateModal';
 
 
 // Main Page Component
@@ -89,12 +88,6 @@ const MainPage = () => {
           </div>
         </div>
       </div>
-
-      {/* Document Generation Modal */}
-      <DocumentGenerateModal 
-        isOpen={false} 
-        onClose={() => {}} 
-      />
 
       <style jsx>{`
         @keyframes slideIn {

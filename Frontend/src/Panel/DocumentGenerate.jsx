@@ -83,6 +83,19 @@ const DocumentGenerate = () => {
   const [arrowDirection, setArrowDirection] = useState('right');
   const containerRef = useRef(null);
 
+  // Define required fields for Guest Lecture
+  const requiredFields = [
+    "Guest Name",
+    "Guest Designation",
+    "Topic",
+    "Event Date",
+    "Activity Code",
+    "Year",
+    "No Of Count",
+    "Organizer Department",
+    "Organizer Faculty Name"
+  ];
+
   // Add new state for discussion ID
   const [discussionId, setDiscussionId] = useState(null);
   const [documentStorage, setDocumentStorage] = useState({});
@@ -319,9 +332,9 @@ const DocumentGenerate = () => {
     handleDocumentFlow(userMessage);
   };
 
-  const handleDocumentFlow = async (message) => {
+  const handleDocumentFlow = async (userMessage) => {
     if (!documentData.type) {
-      const messageLower = message.toLowerCase().trim();
+      const messageLower = userMessage.toLowerCase().trim();
       
       // Check for all document types
       const documentTypes = {
@@ -390,7 +403,7 @@ const DocumentGenerate = () => {
       // Store the current field's value
       const updatedFields = {
         ...documentData.fields,
-        [documentData.currentField]: message
+        [documentData.currentField]: userMessage
       };
 
       setDocumentData(prev => ({
@@ -583,72 +596,135 @@ const DocumentGenerate = () => {
           images: uploadedImages
         }));
         
-        // Bot response
-        setMessages(prev => [...prev, {
-          id: prev.length + 1,
-          text: "Thank you! All information has been collected. You can now generate the document.",
-          isBot: true
-        }]);
+        // All fields are collected, generate content
+        await handleGenerateContent();
       } else {
-        // ... existing message handling code ...
-      }
-    }
+        // Handle other field types
+        const updatedFields = {
+          ...documentData.fields,
+          [documentData.currentField]: userMessage
+        };
 
-    // When handling image upload completion
-    if (documentData.currentField === "Images" && uploadedImages.length > 0) {
-      const documentJson = {
-        discussionId,
-        type: documentData.type,
-        fields: documentData.fields,
-        images: previewImages.map(img => ({
-          id: img.id,
-          name: img.name,
-          type: img.type,
-          size: img.size,
-          url: img.url
-        })),
-        createdAt: new Date().toISOString()
-      };
+        // Update document data with the new field value
+        setDocumentData(prev => ({
+          ...prev,
+          fields: updatedFields
+        }));
 
-      // Load current documents data
-      const currentData = loadDocumentsData();
-      
-      // Update with new document
-      const updatedData = {
-        ...currentData,
-        documents: {
-          ...currentData.documents,
-          [discussionId]: documentJson
+        // Check if all required fields are collected
+        const allFieldsCollected = Object.keys(updatedFields).length === requiredFields.length;
+        
+        if (allFieldsCollected) {
+          // All fields are collected, generate content
+          await handleGenerateContent();
+        } else {
+          // Move to next field
+          const nextField = requiredFields.find(field => !updatedFields[field]);
+          setDocumentData(prev => ({
+            ...prev,
+            currentField: nextField
+          }));
+
+          // Ask for next field
+          setMessages(prev => [...prev, {
+            id: prev.length + 1,
+            text: `Please enter ${nextField}:`,
+            isBot: true
+          }]);
         }
-      };
-
-      // Save to localStorage
-      saveDocument(updatedData);
-
-      // Add success message to chat
-      setMessages(prev => [...prev, {
-        id: prev.length + 1,
-        text: "Images uploaded and stored successfully.",
-        isBot: true
-      }]);
+      }
     }
   };
 
   // Update handleImageUpload function
-  const handleImageUpload = (e) => {
+  const handleImageUpload = async (e) => {
     const files = Array.from(e.target.files);
     
     // Generate unique IDs for each image
     const newPreviewImages = files.map(file => ({
-      id: `IMG_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      url: URL.createObjectURL(file),
-      name: file.name,
-      type: file.type,
-      size: file.size
+        id: `IMG_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        url: URL.createObjectURL(file),
+        name: file.name,
+        type: file.type,
+        size: file.size
     }));
     
     setPreviewImages(prev => [...prev, ...newPreviewImages]);
     setUploadedImages(prev => [...prev, ...files]);
+
+    // After uploading images, prepare the document data
+    const documentJson = {
+        discussionId,
+        type: documentData.type,
+        fields: documentData.fields,
+        images: newPreviewImages.map(img => ({
+            id: img.id,
+            name: img.name,
+            type: img.type,
+            size: img.size,
+            url: img.url
+        })),
+        createdAt: new Date().toISOString()
+    };
+
+    // Load current documents data
+    const currentData = loadDocumentsData();
+    
+    // Update with new document
+    const updatedData = {
+        ...currentData,
+        documents: {
+            ...currentData.documents,
+            [discussionId]: documentJson
+        }
+    };
+
+    // Save to localStorage
+    saveDocument(updatedData);
+
+    // Hit the endpoint to get the response
+    try {
+        const response = await fetch('http://localhost:4000/api/generate-content', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                type: documentData.type,
+                fields: documentData.fields
+            }),
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            setMessages(prev => [...prev, {
+                id: prev.length + 1,
+                text: `Error: ${data.error}`,
+                isBot: true
+            }]);
+            return;
+        }
+
+        // Add the sections to chat messages
+        setMessages(prev => [...prev, {
+            id: prev.length + 1,
+            sections: data.sections,
+            isBot: true
+        }]);
+
+        // Store the complete response for preview
+        setPreviewContent(data);
+        setWordCount(data.word_count);
+
+    } catch (error) {
+        console.error('Error:', error);
+        setMessages(prev => [...prev, {
+            id: prev.length + 1,
+            text: 'An error occurred while generating the content. Please try again.',
+            isBot: true
+        }]);
+    }
   };
 
   // Add function to get stored document data
@@ -702,6 +778,24 @@ const DocumentGenerate = () => {
   // Update renderMessage function to fix alignment
   const renderMessage = (message) => {
     const isUserUpload = message.isUserUpload;
+    
+    // Check if message contains sections data
+    if (message.sections) {
+      return (
+        <div key={message.id} className="mb-4 text-left">
+          <div className="inline-block p-4 rounded-lg bg-gray-100 text-gray-800 max-w-[90%]">
+            <div className="space-y-4">
+              {Object.entries(message.sections).map(([title, content]) => (
+                <div key={title} className="border-b border-gray-200 pb-3 last:border-b-0">
+                  <h3 className="font-semibold text-blue-600 mb-2">{title}</h3>
+                  <p className="whitespace-pre-wrap font-sans text-gray-700">{content}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
     
     return (
       <div
@@ -840,6 +934,51 @@ const DocumentGenerate = () => {
       setDocumentStorage(JSON.parse(storedData));
     }
   }, []);
+
+  const handleGenerateContent = async () => {
+    try {
+      const response = await fetch('http://localhost:4000/api/generate-content', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: documentData.type,
+          fields: documentData.fields
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.error) {
+        setMessages(prev => [...prev, {
+          id: prev.length + 1,
+          text: `Error: ${data.error}`,
+          isBot: true
+        }]);
+        return;
+      }
+
+      // Add the sections to chat messages
+      setMessages(prev => [...prev, {
+        id: prev.length + 1,
+        sections: data.sections,
+        isBot: true
+      }]);
+
+      // Store the complete response for preview
+      setPreviewContent(data);
+      setWordCount(data.word_count);
+
+    } catch (error) {
+      console.error('Error:', error);
+      setMessages(prev => [...prev, {
+        id: prev.length + 1,
+        text: 'An error occurred while generating the content. Please try again.',
+        isBot: true
+      }]);
+    }
+  };
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-gray-100">
