@@ -4,7 +4,7 @@ import {
   ListOrdered, Link as LinkIcon, Heading1, Heading2,
   AlignLeft, AlignCenter, AlignRight, Underline,
   Type, Quote, Code, Eye, Edit, Calendar, Upload, X,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, FileUp
 } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import jsPDF from "jspdf";
@@ -52,6 +52,7 @@ const DocumentGenerate = () => {
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isEditing, setIsEditing] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const editorRef = useRef(null);
   const [editorContent, setEditorContent] = useState('');
   const [selectedFormat, setSelectedFormat] = useState({
@@ -100,6 +101,19 @@ const DocumentGenerate = () => {
   const [discussionId, setDiscussionId] = useState(null);
   const [documentStorage, setDocumentStorage] = useState({});
 
+  // Add new state for image upload loading
+  const [isImageUploading, setIsImageUploading] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [documentContent, setDocumentContent] = useState([]);
+
+  // Add logo state
+  const [logoUrl] = useState('/logo.png'); // Make sure to add your logo in the public folder
+
+  // Add new state for PDF upload
+  const [isPdfUploading, setIsPdfUploading] = useState(false);
+  const [showPdfUpload, setShowPdfUpload] = useState(false);
+
   // Initialize chat with greeting when component mounts
   useEffect(() => {
     const initialMessage = `Hello! I'm Siraj AI! I can help you create various types of documents. Please select from the following options:
@@ -114,7 +128,9 @@ const DocumentGenerate = () => {
 8. Individual Time Table
 9. Master Time Table
 10. Coaching Class Time Table
-11. Guest Lecture`;
+11. Guest Lecture
+
+Or, if you have an existing PDF report, click the "Upload PDF" button below to extract and edit its content.`;
 
     setMessages([{
       id: 1,
@@ -170,168 +186,7 @@ const DocumentGenerate = () => {
     }
   };
 
-  // Update handleImageSubmit function
-  const handleImageSubmit = () => {
-    if (uploadedImages.length === 0) return;
-
-    try {
-      // Create document data with images
-      const imageData = {
-        discussionId,
-        type: documentData.type,
-        fields: documentData.fields,
-        images: previewImages.map(img => ({
-          id: img.id,
-          name: img.name,
-          type: img.type,
-          size: img.size,
-          url: img.url
-        }))
-      };
-
-      // Load current documents data
-      const currentData = loadDocumentsData();
-      
-      // Update with new document
-      const updatedData = {
-        ...currentData,
-        documents: {
-          ...currentData.documents,
-          [discussionId]: {
-            ...imageData,
-            createdAt: new Date().toISOString()
-          }
-        }
-      };
-
-      // Save document data to localStorage only
-      const saved = saveDocument(updatedData);
-
-      if (saved) {
-        // Add images to chat with correct alignment
-        setMessages(prev => [
-          ...prev,
-          {
-            id: prev.length + 1,
-            text: `Uploaded ${uploadedImages.length} image(s)`,
-            images: previewImages,
-            isBot: false,
-            isUserUpload: true
-          },
-          {
-            id: prev.length + 2,
-            text: "Images uploaded and stored successfully.",
-            isBot: true
-          }
-        ]);
-
-        // Clear the upload states
-        setUploadedImages([]);
-        setPreviewImages([]);
-
-        // Move to next step in document flow
-        setDocumentData(prev => ({
-          ...prev,
-          currentField: null,
-          fields: {
-            ...prev.fields,
-            images: imageData.images
-          }
-        }));
-      }
-    } catch (error) {
-      console.error('Error saving document:', error);
-      setMessages(prev => [...prev, {
-        id: prev.length + 1,
-        text: "There was an error saving the document. Please try again.",
-        isBot: true
-      }]);
-    }
-  };
-
-  // Update useEffect for discussion ID
-  useEffect(() => {
-    try {
-      const currentData = loadDocumentsData();
-      const newDocumentId = currentData.lastDocumentId + 1;
-      const newDiscussionId = `DOC_${String(newDocumentId).padStart(3, '0')}`;
-      setDiscussionId(newDiscussionId);
-      
-      // Update lastDocumentId and save
-      const updatedData = {
-        ...currentData,
-        lastDocumentId: newDocumentId
-      };
-      
-      saveDocument(updatedData);
-    } catch (error) {
-      console.error('Error managing document ID:', error);
-      const fallbackId = `DOC_${Date.now()}`;
-      setDiscussionId(fallbackId);
-    }
-  }, []);
-
-  const handleEditorChange = () => {
-    if (editorRef.current) {
-      const content = editorRef.current.innerHTML;
-      setEditorContent(content);
-      // Update word count
-      const text = editorRef.current.innerText;
-      setWordCount(text.trim().split(/\s+/).length);
-    }
-  };
-
-  const handleFormatClick = (command, value = null) => {
-    document.execCommand(command, false, value);
-    if (editorRef.current) {
-      editorRef.current.focus();
-    }
-    handleEditorChange();
-  };
-
-  const generatePDF = () => {
-    const doc = new jsPDF();
-    
-    doc.setFont("Arial", "normal");
-    doc.setFontSize(12);
-    
-    const content = editorRef.current?.innerText || '';
-    const lines = doc.splitTextToSize(content, 180);
-    doc.text(lines, 10, 10);
-    
-    doc.save("document.pdf");
-  };
-
-  const handleDepartmentSelect = (department) => {
-    setShowDepartmentOptions(false);
-    setInputMessage(department);
-    handleSendMessage({ preventDefault: () => {} });
-  };
-
-  const handleYearSelect = (year) => {
-    setShowYearOptions(false);
-    setInputMessage(year);
-    handleSendMessage({ preventDefault: () => {} });
-  };
-
-  const handleSendMessage = (event) => {
-    event.preventDefault();
-    if (!inputMessage.trim()) return;
-
-    const userMessage = inputMessage.trim();
-    setInputMessage('');
-    
-    // Add user message to chat
-    setMessages(prev => [...prev, {
-      id: prev.length + 1,
-      text: userMessage,
-      isBot: false
-    }]);
-
-    // Handle the message flow
-    handleDocumentFlow(userMessage);
-  };
-
+  // Update handleDocumentFlow function
   const handleDocumentFlow = async (userMessage) => {
     if (!documentData.type) {
       const messageLower = userMessage.toLowerCase().trim();
@@ -441,7 +296,6 @@ const DocumentGenerate = () => {
           accept: "image/*"
         }
       ];
-      
 
       // Find current field index
       const currentIndex = fieldSequence.findIndex(item => item.field === documentData.currentField);
@@ -493,153 +347,21 @@ const DocumentGenerate = () => {
             }]);
         }
       } else {
-        // Generate document content with a better format
-        const content = `
-          <div style="max-width: 800px; margin: 0 auto; padding: 20px; font-family: 'Times New Roman', Times, serif;">
-            <!-- Header with College Logo Placeholder -->
-            <div style="text-align: center; margin-bottom: 30px;">
-              <div style="font-size: 24px; font-weight: bold; color: #1a365d; margin-bottom: 10px;">MUTHAYAMMAL ENGINEERING COLLEGE</div>
-              <div style="font-size: 14px; color: #4a5568; margin-bottom: 5px;">(An Autonomous Institution)</div>
-              <div style="font-size: 14px; color: #4a5568; margin-bottom: 5px;">Rasipuram - 637 408, Namakkal Dist., Tamil Nadu</div>
-              <div style="width: 100%; height: 2px; background-color: #1a365d; margin: 15px 0;"></div>
-            </div>
-
-            <!-- Department Header -->
-            <div style="text-align: center; margin-bottom: 20px;">
-              <div style="font-size: 18px; font-weight: bold; color: #2d3748;">Department of ${documentData.fields["Organizer Department"]}</div>
-              <div style="font-size: 20px; font-weight: bold; color: #1a365d; margin-top: 10px;">GUEST LECTURE DETAILS</div>
-            </div>
-
-            <!-- Content Table -->
-            <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
-              <tbody>
-                <tr>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0; width: 40%;"><strong>Name of the Guest</strong></td>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0;">${documentData.fields["Guest Name"]}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0;"><strong>Designation</strong></td>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0;">${documentData.fields["Guest Designation"]}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0;"><strong>Topic</strong></td>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0;">${documentData.fields["Topic"]}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0;"><strong>Date</strong></td>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0;">${documentData.fields["Event Date"]}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0;"><strong>Activity Code</strong></td>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0;">${documentData.fields["Activity Code"]}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0;"><strong>Target Audience</strong></td>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0;">${documentData.fields["Year"]}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0;"><strong>Expected No. of Participants</strong></td>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0;">${documentData.fields["No Of Count"]}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0;"><strong>Faculty Coordinator</strong></td>
-                  <td style="padding: 8px; border: 1px solid #e2e8f0;">${documentData.fields["Organizer Faculty Name"]}</td>
-                </tr>
-              </tbody>
-            </table>
-
-            <!-- Signature Section -->
-            <div style="display: flex; justify-content: space-between; margin-top: 50px;">
-              <div style="text-align: center;">
-                <div style="margin-bottom: 30px;">____________________</div>
-                <div>Faculty Coordinator</div>
-              </div>
-              <div style="text-align: center;">
-                <div style="margin-bottom: 30px;">____________________</div>
-                <div>HoD/${documentData.fields["Organizer Department"]}</div>
-              </div>
-              <div style="text-align: center;">
-                <div style="margin-bottom: 30px;">____________________</div>
-                <div>Principal</div>
-              </div>
-            </div>
-          </div>
-        `;
-        
-        setEditorContent(content);
-        setMessages(prev => [...prev, {
-          id: prev.length + 1,
-          text: "Document has been generated. You can now edit or export it.",
-          isBot: true
-        }]);
-
-        // Reset document data
-        setDocumentData({
-          type: null,
-          currentField: null,
-          fields: {}
-        });
-      }
-    } else {
-      if (documentData.currentField?.type === 'image') {
-        // Add images to messages
-        setMessages(prev => [...prev, {
-          id: prev.length + 1,
-          text: 'Images uploaded successfully:',
-          images: previewImages,
-          isBot: false
-        }]);
-        
-        // Move to next field
-        setDocumentData(prev => ({
-          ...prev,
-          images: uploadedImages
-        }));
-        
-        // All fields are collected, generate content
-        await handleGenerateContent();
-      } else {
-        // Handle other field types
-        const updatedFields = {
-          ...documentData.fields,
-          [documentData.currentField]: userMessage
-        };
-
-        // Update document data with the new field value
-        setDocumentData(prev => ({
-          ...prev,
-          fields: updatedFields
-        }));
-
-        // Check if all required fields are collected
-        const allFieldsCollected = Object.keys(updatedFields).length === requiredFields.length;
-        
-        if (allFieldsCollected) {
-          // All fields are collected, generate content
-          await handleGenerateContent();
-        } else {
-          // Move to next field
-          const nextField = requiredFields.find(field => !updatedFields[field]);
-          setDocumentData(prev => ({
-            ...prev,
-            currentField: nextField
-          }));
-
-          // Ask for next field
-          setMessages(prev => [...prev, {
-            id: prev.length + 1,
-            text: `Please enter ${nextField}:`,
-            isBot: true
-          }]);
-        }
+        // All fields are collected, show empty document panel
+        setEditorContent('');
+        setDocumentContent([]);
+        setTotalPages(1);
+        setCurrentPage(1);
       }
     }
   };
 
-  // Update handleImageUpload function
+  // Update handleImageUpload function to remove spinner
   const handleImageUpload = async (e) => {
     const files = Array.from(e.target.files);
+    setIsImageUploading(true);
     
+    try {
     // Generate unique IDs for each image
     const newPreviewImages = files.map(file => ({
         id: `IMG_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -682,9 +404,87 @@ const DocumentGenerate = () => {
     // Save to localStorage
     saveDocument(updatedData);
 
-    // Hit the endpoint to get the response
+      // Add message to chat without loading state
+      setMessages(prev => [...prev, {
+          id: Date.now(),
+          text: 'Upload image and click send to generate content.',
+          isBot: true
+      }]);
+
+    } catch (error) {
+      console.error('Error:', error);
+      setMessages(prev => [...prev, {
+          id: Date.now(),
+          text: 'An error occurred while uploading images. Please try again.',
+          isBot: true
+      }]);
+    } finally {
+      setIsImageUploading(false);
+    }
+  };
+
+  // Update handleImageSubmit function to handle API call without sending images
+  const handleImageSubmit = async () => {
+    if (uploadedImages.length === 0) return;
+
+    setIsLoading(true);
     try {
-        const response = await fetch('http://localhost:4000/api/generate-content', {
+      // Add loading message to chat
+      const loadingMessageId = Date.now();
+      setMessages(prev => [...prev, {
+          id: loadingMessageId,
+          text: 'Processing images and generating content...',
+          isBot: true,
+          isLoading: true
+      }]);
+
+      // Create document data with images
+      const imageData = {
+        discussionId,
+        type: documentData.type,
+        fields: documentData.fields,
+        images: previewImages.map(img => ({
+          id: img.id,
+          name: img.name,
+          type: img.type,
+          size: img.size,
+          url: img.url
+        }))
+      };
+
+      // Load current documents data
+      const currentData = loadDocumentsData();
+      
+      // Update with new document
+      const updatedData = {
+        ...currentData,
+        documents: {
+          ...currentData.documents,
+          [discussionId]: {
+            ...imageData,
+            createdAt: new Date().toISOString()
+          }
+        }
+      };
+
+      // Save document data to localStorage
+      const saved = saveDocument(updatedData);
+
+      if (saved) {
+        // Add images to chat with correct alignment
+        setMessages(prev => [
+          ...prev,
+          {
+            id: prev.length + 1,
+            text: `Uploaded ${uploadedImages.length} image(s)`,
+            images: previewImages,
+            isBot: false,
+            isUserUpload: true
+          }
+        ]);
+
+        // Call the API to generate content without sending images
+        const response = await fetch('http://localhost:8000/api/generate-content', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -698,32 +498,93 @@ const DocumentGenerate = () => {
         const data = await response.json();
 
         if (data.error) {
+          // Remove loading message and show error
+          setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
             setMessages(prev => [...prev, {
-                id: prev.length + 1,
+            id: Date.now(),
                 text: `Error: ${data.error}`,
                 isBot: true
             }]);
             return;
         }
 
-        // Add the sections to chat messages
-        setMessages(prev => [...prev, {
-            id: prev.length + 1,
-            sections: data.sections,
-            isBot: true
-        }]);
+        // Process content into pages
+        const content = data.content || '';
+        const pages = content.split('<div class="page-break"></div>');
+        setDocumentContent(pages);
+        setTotalPages(pages.length);
 
-        // Store the complete response for preview
+        // Generate HTML content for editor with images
+        const editorContent = pages.map((page, index) => `
+          <div class="page" style="page-break-after: always;">
+            ${page}
+          </div>
+        `).join('') + `
+          <div class="page" style="page-break-after: always;">
+            <h2 class="text-xl font-bold mb-6">Event Images</h2>
+            <div class="grid grid-cols-2 gap-6">
+              ${previewImages.map(img => `
+                <div class="max-w-[300px]">
+                  <img src="${img.url}" alt="${img.name}" class="w-full h-auto object-contain rounded-lg shadow-lg" />
+                  <p class="text-sm text-gray-600 mt-2">${img.name}</p>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+
+        // Remove loading message and update with success message and sections
+        setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
+        setMessages(prev => [
+          ...prev,
+          {
+            id: Date.now(),
+            text: "Document has been generated successfully!",
+            isBot: true
+          }
+        ]);
+
+        // Add sections to chat
+        if (data.sections) {
+          Object.entries(data.sections).forEach(([section, content]) => {
+            setMessages(prev => [...prev, {
+              id: Date.now() + Math.random(),
+              text: `**${section}**\n\n${content}`,
+              isBot: true,
+              isContent: true
+            }]);
+          });
+        }
+
+        // Update both chat and document panel
+        setEditorContent(editorContent);
         setPreviewContent(data);
         setWordCount(data.word_count);
 
+        // Clear the upload states
+        setUploadedImages([]);
+        setPreviewImages([]);
+
+        // Move to next step in document flow
+        setDocumentData(prev => ({
+          ...prev,
+          currentField: null,
+          fields: {
+            ...prev.fields,
+            images: imageData.images
+          }
+        }));
+      }
     } catch (error) {
         console.error('Error:', error);
+      setMessages(prev => prev.filter(msg => msg.isLoading));
         setMessages(prev => [...prev, {
-            id: prev.length + 1,
+        id: Date.now(),
             text: 'An error occurred while generating the content. Please try again.',
             isBot: true
         }]);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -752,55 +613,61 @@ const DocumentGenerate = () => {
     }
   };
 
-  // Image preview component
+  // Update ImagePreview component for smaller images
   const ImagePreview = ({ images, onRemove }) => {
     return (
-      <div className="flex flex-wrap gap-2 mt-2 p-2 bg-white rounded-lg border">
+      <div className="flex flex-col gap-4 mt-2 p-2 bg-white rounded-lg border">
         {images.map((image, index) => (
-          <div key={index} className="relative group">
+          <div key={index} className="relative group max-w-[200px]">
             <img
               src={image.url}
               alt={image.name}
-              className="w-20 h-20 object-cover rounded-lg border border-gray-200"
+              className="w-full h-auto object-contain rounded-lg border border-gray-200"
             />
             <button
               onClick={() => onRemove(index)}
-              className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+              className="absolute top-2 right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
             >
               <X className="w-4 h-4" />
             </button>
+            <p className="text-sm text-gray-600 mt-2">{image.name}</p>
           </div>
         ))}
       </div>
     );
   };
 
-  // Update renderMessage function to fix alignment
+  // Update renderMessage function to show smaller images in chat
   const renderMessage = (message) => {
-    const isUserUpload = message.isUserUpload;
-    
-    // Check if message contains sections data
-    if (message.sections) {
+    if (message.isLoading) {
       return (
         <div key={message.id} className="mb-4 text-left">
           <div className="inline-block p-4 rounded-lg bg-gray-100 text-gray-800 max-w-[90%]">
-            <div className="space-y-4">
-              {Object.entries(message.sections).map(([title, content]) => (
-                <div key={title} className="border-b border-gray-200 pb-3 last:border-b-0">
-                  <h3 className="font-semibold text-blue-600 mb-2">{title}</h3>
-                  <p className="whitespace-pre-wrap font-sans text-gray-700">{content}</p>
+            <div className="flex items-center gap-2">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+              <span>{message.text}</span>
                 </div>
-              ))}
             </div>
+        </div>
+      );
+    }
+
+    if (message.isContent) {
+      return (
+        <div key={message.id} className="mb-4 text-left">
+          <div className="inline-block p-4 rounded-lg bg-gray-100 text-gray-800 max-w-[90%]">
+            <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(message.text) }} />
           </div>
         </div>
       );
     }
+
+    const isUserUpload = message.isUserUpload;
     
     return (
       <div
         key={message.id}
-        className={`mb-4 ${message.isBot ? 'text-left' : isUserUpload ? 'text-right' : 'text-right'}`}
+        className={`mb-4 ${message.isBot ? 'text-left' : 'text-right'}`}
       >
         <div
           className={`inline-block p-3 rounded-lg ${
@@ -813,14 +680,16 @@ const DocumentGenerate = () => {
             {message.text}
           </div>
           {message.images && (
-            <div className="flex flex-wrap gap-2 mt-2">
+            <div className="flex flex-col gap-4 mt-4">
               {message.images.map((image, index) => (
+                <div key={index} className="max-w-[200px]">
                 <img
-                  key={index}
                   src={image.url}
                   alt={`Uploaded ${index + 1}`}
-                  className="w-24 h-24 object-cover rounded-lg border-2 border-white"
+                    className="w-full h-auto object-contain rounded-lg border-2 border-white"
                 />
+                  <p className="text-sm mt-2 text-gray-200">{image.name}</p>
+                </div>
               ))}
             </div>
           )}
@@ -837,13 +706,48 @@ const DocumentGenerate = () => {
     );
   };
 
+  // Update renderChatInput to handle image upload loading state
   const renderChatInput = () => {
+    if (isLoading || isImageUploading || isPdfUploading) {
+      return (
+        <div className="flex items-center justify-center p-4">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        </div>
+      );
+    }
+
+    if (showPdfUpload) {
+      return (
+        <div className="space-y-2">
+          <p className="text-sm text-gray-600">Upload PDF report:</p>
+          <div className="flex gap-2">
+            <label className="flex-1 flex items-center gap-2 p-2 bg-gray-100 hover:bg-gray-200 rounded-lg cursor-pointer transition-colors">
+              <FileUp className="w-5 h-5 text-gray-600" />
+              <span className="text-gray-600">Choose PDF</span>
+              <input
+                type="file"
+                accept=".pdf"
+                onChange={handlePdfUpload}
+                className="hidden"
+              />
+            </label>
+            <button
+              onClick={() => setShowPdfUpload(false)}
+              className="p-2 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     if (documentData.currentField === "Images") {
       return (
         <div className="space-y-2">
           <p className="text-sm text-gray-600">Upload images:</p>
           <div className="flex gap-2">
-            <label className="flex-1 flex items-center gap-2 p-2 bg-gray-100 hover:bg-gray-200 rounded-lg cursor-pointer transition-colors">
+            <label className={`flex-1 flex items-center gap-2 p-2 bg-gray-100 hover:bg-gray-200 rounded-lg cursor-pointer transition-colors ${isImageUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
               <Upload className="w-5 h-5 text-gray-600" />
               <span className="text-gray-600">Choose Images</span>
               <input
@@ -852,12 +756,14 @@ const DocumentGenerate = () => {
                 accept="image/*"
                 onChange={handleImageUpload}
                 className="hidden"
+                disabled={isImageUploading}
               />
             </label>
             {uploadedImages.length > 0 && (
               <button
                 onClick={handleImageSubmit}
-                className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+                className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isImageUploading}
               >
                 <Send className="w-5 h-5" />
                 <span>Send</span>
@@ -885,10 +791,12 @@ const DocumentGenerate = () => {
           onChange={(e) => setInputMessage(e.target.value)}
           placeholder="Type your message..."
           className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          disabled={isLoading}
         />
         <button
           type="submit"
-          className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={isLoading}
         >
           <Send className="w-5 h-5" />
         </button>
@@ -935,9 +843,11 @@ const DocumentGenerate = () => {
     }
   }, []);
 
+  // Update handleGenerateContent function
   const handleGenerateContent = async () => {
+    setIsLoading(true);
     try {
-      const response = await fetch('http://localhost:4000/api/generate-content', {
+      const response = await fetch('http://localhost:8000/api/generate-content', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -952,18 +862,37 @@ const DocumentGenerate = () => {
 
       if (data.error) {
         setMessages(prev => [...prev, {
-          id: prev.length + 1,
+          id: Date.now(),
           text: `Error: ${data.error}`,
           isBot: true
         }]);
         return;
       }
 
-      // Add the sections to chat messages
+      // Process content into pages
+      const content = data.content || '';
+      const pages = content.split('<div class="page-break"></div>');
+      setDocumentContent(pages);
+      setTotalPages(pages.length);
+
+      // Generate HTML content for editor
+      const editorContent = pages.map((page, index) => `
+        <div class="page" style="page-break-after: always;">
+          ${page}
+        </div>
+      `).join('');
+
+      // Update both chat and document panel
+      setEditorContent(editorContent);
       setMessages(prev => [...prev, {
-        id: prev.length + 1,
-        sections: data.sections,
+        id: Date.now(),
+        text: "Document has been generated successfully!",
         isBot: true
+      }, {
+        id: Date.now() + 1,
+        text: content,
+        isBot: true,
+        isContent: true
       }]);
 
       // Store the complete response for preview
@@ -973,11 +902,325 @@ const DocumentGenerate = () => {
     } catch (error) {
       console.error('Error:', error);
       setMessages(prev => [...prev, {
-        id: prev.length + 1,
+        id: Date.now(),
         text: 'An error occurred while generating the content. Please try again.',
         isBot: true
       }]);
+    } finally {
+      setIsLoading(false);
     }
+  };
+
+  // Add pagination controls to the editor section
+  const renderPagination = () => {
+    if (totalPages <= 1) return null;
+
+    return (
+      <div className="flex items-center justify-center gap-4 p-4 border-t bg-white">
+        <button
+          onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+          disabled={currentPage === 1}
+          className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <ChevronLeft className="w-6 h-6" />
+        </button>
+        <span className="text-sm text-gray-600">
+          Page {currentPage} of {totalPages}
+        </span>
+        <button
+          onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+          disabled={currentPage === totalPages}
+          className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <ChevronRight className="w-6 h-6" />
+        </button>
+      </div>
+    );
+  };
+
+  // Add back the missing functions
+  const handleSendMessage = (event) => {
+    event.preventDefault();
+    if (!inputMessage.trim()) return;
+
+    const userMessage = inputMessage.trim();
+    setInputMessage('');
+    
+    // Add user message to chat
+    setMessages(prev => [...prev, {
+      id: prev.length + 1,
+      text: userMessage,
+      isBot: false
+    }]);
+
+    // Handle the message flow
+    handleDocumentFlow(userMessage);
+  };
+
+  const handleDepartmentSelect = (department) => {
+    setShowDepartmentOptions(false);
+    setInputMessage(department);
+    handleSendMessage({ preventDefault: () => {} });
+  };
+
+  const handleYearSelect = (year) => {
+    setShowYearOptions(false);
+    setInputMessage(year);
+    handleSendMessage({ preventDefault: () => {} });
+  };
+
+  const handleEditorChange = (e) => {
+    if (editorRef.current) {
+      const content = editorRef.current.innerHTML;
+      setEditorContent(content);
+      
+      // Update word count
+      const text = editorRef.current.innerText;
+      setWordCount(text.trim().split(/\s+/).length);
+    }
+  };
+
+  const handleEditorKeyDown = (e) => {
+    // Remove all key event handling to allow default behavior
+    return true;
+  };
+
+  const handleFormatClick = (command, value = null) => {
+    document.execCommand(command, false, value);
+    if (editorRef.current) {
+      editorRef.current.focus();
+    }
+    handleEditorChange();
+  };
+
+  const generatePDF = () => {
+    const doc = new jsPDF();
+    
+    doc.setFont("Arial", "normal");
+    doc.setFontSize(12);
+    
+    const content = editorRef.current?.innerText || '';
+    const lines = doc.splitTextToSize(content, 180);
+    doc.text(lines, 10, 10);
+    
+    doc.save("document.pdf");
+  };
+
+  // Update the document panel content rendering
+  const renderDocumentContent = (content, isPreview = false) => {
+    const containerClass = isPreview ? 'preview-container' : 'edit-container';
+    
+    const documentHeader = `
+      <div class="document-header mb-8">
+        <!-- Logo -->
+        <div class="flex justify-center mb-4 border-b pb-4">
+          <img src="${logoUrl}" alt="Company Logo" class="h-16 object-contain" />
+        </div>
+
+        <!-- Document Type -->
+        <div class="text-center mb-6">
+          <h1 class="text-2xl font-bold tracking-wide">GUEST LECTURE REPORT</h1>
+        </div>
+
+        <!-- Document Details -->
+        <div class="mb-6">
+          <table class="w-full">
+            <tbody>
+              <tr>
+                <td class="py-2" style="width: 120px;"><span class="font-semibold">Topic</span></td>
+                <td class="py-2" style="width: 300px;">: ${documentData.fields?.Topic || ''}</td>
+                <td class="py-2" style="width: 120px;"><span class="font-semibold">Activity Code</span></td>
+                <td class="py-2">: ${documentData.fields?.['Activity Code'] || ''}</td>
+              </tr>
+              <tr>
+                <td class="py-2"><span class="font-semibold">Guest</span></td>
+                <td class="py-2">: ${documentData.fields?.['Guest Name'] || ''}</td>
+                <td class="py-2"><span class="font-semibold">Event Date</span></td>
+                <td class="py-2">: ${documentData.fields?.['Event Date'] || ''}</td>
+              </tr>
+              <tr>
+                <td class="py-2"></td>
+                <td class="py-2 text-gray-600 pl-6">${documentData.fields?.['Guest Designation'] || ''}</td>
+                <td class="py-2"><span class="font-semibold">Coordinator</span></td>
+                <td class="py-2">: ${documentData.fields?.['Organizer Faculty Name'] || ''}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Additional Details -->
+        <div class="flex justify-between text-sm mb-6">
+          <div style="width: 300px;" class="flex">
+            <span class="font-semibold" style="width: 120px;">Department</span>
+            <span>: ${documentData.fields?.['Organizer Department'] || ''}</span>
+          </div>
+          <div style="width: 250px;" class="flex">
+            <span class="font-semibold" style="width: 120px;">Year</span>
+            <span>: ${documentData.fields?.Year || ''}</span>
+          </div>
+          <div style="width: 300px;" class="flex">
+            <span class="font-semibold" style="width: 180px;">Expected Participants</span>
+            <span>: ${documentData.fields?.['No Of Count'] || ''}</span>
+          </div>
+        </div>
+
+        <!-- Divider -->
+        <hr class="border-t-2 border-gray-300 mb-6">
+      </div>
+    `;
+
+    return (
+      <div className={`${containerClass} w-full min-h-[500px] p-8 border rounded-lg bg-white prose max-w-none`}>
+        {/* Static Header Section */}
+        <div dangerouslySetInnerHTML={{ 
+          __html: DOMPurify.sanitize(documentHeader, {
+            ADD_TAGS: ['img', 'table', 'tbody', 'tr', 'td', 'style'],
+            ADD_ATTR: ['src', 'alt', 'class', 'style', 'width']
+          })
+        }} />
+        
+        {/* Content Section */}
+        <div className="mt-8">
+          {isPreview ? (
+            <div 
+              className="min-h-[500px] prose max-w-none"
+              dangerouslySetInnerHTML={{ 
+                __html: DOMPurify.sanitize(content || '', {
+                  ADD_TAGS: ['img', 'div'],
+                  ADD_ATTR: ['src', 'alt', 'class', 'style']
+                })
+              }} 
+            />
+          ) : (
+            <div
+              ref={editorRef}
+              contentEditable
+              suppressContentEditableWarning={true}
+              className="min-h-[500px] outline-none prose max-w-none text-base"
+              style={{
+                fontFamily: selectedFormat.fontFamily,
+                fontSize: selectedFormat.fontSize,
+                border: 'none',
+                background: 'transparent',
+                padding: '0',
+                lineHeight: '1.6'
+              }}
+              onInput={handleEditorChange}
+              dangerouslySetInnerHTML={{ __html: content }}
+            />
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // Add new function to handle PDF upload
+  const handlePdfUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !file.type.includes('pdf')) {
+      setMessages(prev => [...prev, {
+        id: Date.now(),
+        text: 'Please upload a valid PDF file.',
+        isBot: true
+      }]);
+      return;
+    }
+
+    setIsPdfUploading(true);
+    const formData = new FormData();
+    formData.append('pdf', file);
+
+    try {
+      const response = await fetch('http://localhost:8000/api/extract-pdf', {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await response.json();
+
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      // Update document data with extracted content
+      setDocumentData(prev => ({
+        ...prev,
+        type: 'GuestLecture',
+        fields: {
+          ...data.fields,
+        }
+      }));
+
+      // Update editor content
+      setEditorContent(data.content);
+      setDocumentContent([data.content]);
+      setTotalPages(1);
+      setCurrentPage(1);
+
+      setMessages(prev => [...prev, {
+        id: Date.now(),
+        text: 'PDF content extracted successfully! You can now edit the content in the document editor.',
+        isBot: true
+      }]);
+
+      // Switch to editor mode
+      setIsEditing(true);
+      setShowPdfUpload(false);
+
+    } catch (error) {
+      console.error('Error:', error);
+      setMessages(prev => [...prev, {
+        id: Date.now(),
+        text: 'An error occurred while extracting PDF content. Please try again.',
+        isBot: true
+      }]);
+    } finally {
+      setIsPdfUploading(false);
+    }
+  };
+
+  // Add PDF upload button to the document header
+  const renderDocumentHeader = () => {
+    return (
+      <div className="p-4 bg-white border-b flex justify-between items-center">
+        <div className="flex items-center space-x-2">
+          <FileText className="w-5 h-5 text-gray-600" />
+          <span className="font-medium">Document Editor</span>
+        </div>
+        <div className="flex space-x-2">
+          <button
+            onClick={() => setShowPdfUpload(true)}
+            className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2"
+          >
+            <FileUp className="w-4 h-4" />
+            <span>Upload PDF</span>
+          </button>
+          <button
+            onClick={() => setIsEditing(!isEditing)}
+            className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2"
+          >
+            {isEditing ? (
+              <>
+                <Eye className="w-4 h-4" />
+                <span>Preview</span>
+              </>
+            ) : (
+              <>
+                <Edit className="w-4 h-4" />
+                <span>Edit</span>
+              </>
+            )}
+          </button>
+          <button 
+            onClick={generatePDF}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+          >
+            <Download className="w-4 h-4" />
+            <span>Export PDF</span>
+          </button>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -1062,61 +1305,19 @@ const DocumentGenerate = () => {
               !showBothPanels && arrowDirection === 'right' ? 'w-0' : showBothPanels ? 'w-1/2' : 'w-full'
             } transition-all duration-300 ease-in-out flex flex-col bg-gray-100 overflow-hidden`}
           >
-            <div className="p-4 bg-white border-b flex justify-between items-center">
-              <div className="flex items-center space-x-2">
-                <FileText className="w-5 h-5 text-gray-600" />
-                <span className="font-medium">Document Editor</span>
-              </div>
-              <div className="flex space-x-2">
-                <button
-                  onClick={() => setIsEditing(!isEditing)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2"
-                >
-                  {isEditing ? (
-                    <>
-                      <Eye className="w-4 h-4" />
-                      <span>Preview</span>
-                    </>
-                  ) : (
-                    <>
-                      <Edit className="w-4 h-4" />
-                      <span>Edit</span>
-                    </>
-                  )}
-                </button>
-                <button 
-                  onClick={generatePDF}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Export PDF</span>
-                </button>
-              </div>
-            </div>
-
+            {renderDocumentHeader()}
             <div className="flex-1 overflow-y-auto">
               {isEditing ? (
                 <>
                   <EditorToolbar onFormatClick={handleFormatClick} />
                   <div className="p-8">
-                    <div
-                      ref={editorRef}
-                      contentEditable
-                      className="w-full h-full min-h-[500px] p-4 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                      style={{
-                        fontFamily: selectedFormat.fontFamily,
-                        fontSize: selectedFormat.fontSize
-                      }}
-                      onInput={handleEditorChange}
-                    />
+                    {renderDocumentContent(editorContent)}
                   </div>
                 </>
               ) : (
                 <div className="p-8">
-                  <div 
-                    className="w-full min-h-[500px] p-4 border rounded-lg bg-white"
-                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(editorContent) }}
-                  />
+                  {renderDocumentContent(documentContent[currentPage - 1], true)}
+                  {renderPagination()}
                 </div>
               )}
             </div>

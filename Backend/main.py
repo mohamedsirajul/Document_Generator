@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
@@ -13,6 +13,8 @@ import re
 import asyncio
 import aiohttp
 from dotenv import load_dotenv
+import PyPDF2
+import io
 
 # Load environment variables
 load_dotenv()
@@ -37,7 +39,7 @@ app.add_middleware(
 )
 
 # Retrieve API key securely
-OPENROUTER_API_KEY = "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"
+OPENROUTER_API_KEY = "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"
 if not OPENROUTER_API_KEY:
     raise ValueError("API Key not found! Set OPENROUTER_API_KEY in environment variables.")
 
@@ -623,6 +625,71 @@ async def websocket_generate_content(websocket: WebSocket):
             await websocket.close()
         except:
             pass
+
+@app.post("/api/extract-pdf")
+async def extract_pdf(pdf: UploadFile = File(...)):
+    """
+    Extract content from an uploaded PDF file and attempt to parse it into the required fields.
+    """
+    if not pdf.filename.endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="File must be a PDF")
+
+    try:
+        # Read the uploaded file
+        contents = await pdf.read()
+        pdf_file = io.BytesIO(contents)
+        
+        # Initialize PDF reader
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        
+        # Extract text from all pages
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text()
+
+        # Initialize fields dictionary
+        fields = {
+            "Guest Name": "",
+            "Guest Designation": "",
+            "Topic": "",
+            "Event Date": "",
+            "Activity Code": "",
+            "Year": "",
+            "No Of Count": "",
+            "Organizer Department": "",
+            "Organizer Faculty Name": ""
+        }
+
+        # Try to extract fields using pattern matching
+        patterns = {
+            "Guest Name": r"Guest(?:\s*Name)?[\s:]+([^\n]+)",
+            "Guest Designation": r"Designation[\s:]+([^\n]+)",
+            "Topic": r"Topic[\s:]+([^\n]+)",
+            "Event Date": r"(?:Event\s*)?Date[\s:]+([^\n]+)",
+            "Activity Code": r"Activity\s*Code[\s:]+([^\n]+)",
+            "Year": r"Year[\s:]+([^\n]+)",
+            "No Of Count": r"(?:Expected\s*)?Participants?[\s:]+(\d+)",
+            "Organizer Department": r"Department[\s:]+([^\n]+)",
+            "Organizer Faculty Name": r"(?:Faculty|Coordinator)[\s:]+([^\n]+)"
+        }
+
+        # Extract fields using patterns
+        for field, pattern in patterns.items():
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                fields[field] = match.group(1).strip()
+
+        # Return the extracted content and fields
+        return {
+            "content": text,
+            "fields": fields,
+            "word_count": len(text.split())
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
+    finally:
+        await pdf.close()
 
 if __name__ == "__main__":
     import uvicorn
