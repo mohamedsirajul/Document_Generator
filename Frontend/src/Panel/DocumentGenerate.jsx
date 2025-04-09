@@ -7,13 +7,58 @@ import {
   ChevronLeft, ChevronRight, FileUp
 } from 'lucide-react';
 import DOMPurify from 'dompurify';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
 import jsPDF from "jspdf";
 import "jspdf-autotable";
 
 // Editor Toolbar Component
-const EditorToolbar = ({ onFormatClick }) => {
+const EditorToolbar = ({ onFormatClick, selectedFormat, onFormatChange }) => {
+  const fonts = [
+    { label: 'Arial', value: 'Arial' },
+    { label: 'Times New Roman', value: 'Times New Roman' },
+    { label: 'Calibri', value: 'Calibri' },
+    { label: 'Georgia', value: 'Georgia' },
+    { label: 'Verdana', value: 'Verdana' }
+  ];
+
+  const fontSizes = [
+    { label: 'Small', value: '12px' },
+    { label: 'Normal', value: '16px' },
+    { label: 'Large', value: '20px' },
+    { label: 'Extra Large', value: '24px' }
+  ];
+
   return (
-    <div className="p-2 border-b bg-white flex flex-wrap gap-1">
+    <div className="p-2 border-b bg-white flex flex-wrap gap-2 items-center">
+      {/* Font Family Dropdown */}
+      <select 
+        value={selectedFormat.fontFamily}
+        onChange={(e) => onFormatChange('fontFamily', e.target.value)}
+        className="p-1 border rounded hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+      >
+        {fonts.map((font) => (
+          <option key={font.value} value={font.value} style={{ fontFamily: font.value }}>
+            {font.label}
+          </option>
+        ))}
+      </select>
+
+      {/* Font Size Dropdown */}
+      <select 
+        value={selectedFormat.fontSize}
+        onChange={(e) => onFormatChange('fontSize', e.target.value)}
+        className="p-1 border rounded hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+      >
+        {fontSizes.map((size) => (
+          <option key={size.value} value={size.value}>
+            {size.label}
+          </option>
+        ))}
+      </select>
+
+      <div className="h-6 w-px bg-gray-300 mx-2" />
+
       <button onClick={() => onFormatClick('bold')} className="p-2 hover:bg-gray-100 rounded">
         <Bold className="w-4 h-4" />
       </button>
@@ -23,18 +68,27 @@ const EditorToolbar = ({ onFormatClick }) => {
       <button onClick={() => onFormatClick('underline')} className="p-2 hover:bg-gray-100 rounded">
         <Underline className="w-4 h-4" />
       </button>
+
+      <div className="h-6 w-px bg-gray-300 mx-2" />
+
       <button onClick={() => onFormatClick('insertUnorderedList')} className="p-2 hover:bg-gray-100 rounded">
         <List className="w-4 h-4" />
       </button>
       <button onClick={() => onFormatClick('insertOrderedList')} className="p-2 hover:bg-gray-100 rounded">
         <ListOrdered className="w-4 h-4" />
       </button>
+
+      <div className="h-6 w-px bg-gray-300 mx-2" />
+
       <button onClick={() => onFormatClick('formatBlock', 'h1')} className="p-2 hover:bg-gray-100 rounded">
         <Heading1 className="w-4 h-4" />
       </button>
       <button onClick={() => onFormatClick('formatBlock', 'h2')} className="p-2 hover:bg-gray-100 rounded">
         <Heading2 className="w-4 h-4" />
       </button>
+
+      <div className="h-6 w-px bg-gray-300 mx-2" />
+
       <button onClick={() => onFormatClick('justifyLeft')} className="p-2 hover:bg-gray-100 rounded">
         <AlignLeft className="w-4 h-4" />
       </button>
@@ -57,7 +111,8 @@ const DocumentGenerate = () => {
   const [editorContent, setEditorContent] = useState('');
   const [selectedFormat, setSelectedFormat] = useState({
     fontSize: '16px',
-    fontFamily: 'Arial'
+    fontFamily: 'Arial',
+    lastSelection: null
   });
   const chatContainerRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -108,11 +163,54 @@ const DocumentGenerate = () => {
   const [documentContent, setDocumentContent] = useState([]);
 
   // Add logo state
-  const [logoUrl] = useState('/logo.png'); // Make sure to add your logo in the public folder
-
+  const [logoUrl] = useState(`${process.env.PUBLIC_URL}/Fxec_logo.png`); // Ensure the logo is in the public folder
+  
   // Add new state for PDF upload
   const [isPdfUploading, setIsPdfUploading] = useState(false);
   const [showPdfUpload, setShowPdfUpload] = useState(false);
+
+  const [undoStack, setUndoStack] = useState([]);
+  const [redoStack, setRedoStack] = useState([]);
+
+  // Quill editor modules configuration
+  const modules = {
+    toolbar: [
+      [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
+      ['bold', 'italic', 'underline', 'strike'],
+      [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+      [{ 'align': [] }],
+      ['link', 'image'],
+      ['clean']
+    ],
+    clipboard: {
+      matchVisual: false,
+    }
+  };
+
+  // Quill editor formats
+  const formats = [
+    'header',
+    'bold', 'italic', 'underline', 'strike',
+    'list', 'bullet',
+    'align',
+    'link', 'image'
+  ];
+
+  // Function to handle content change
+  const handleEditorChange = (content) => {
+    setEditorContent(content);
+    
+    // Update word count
+    const text = editorRef.current?.getEditor().getText() || '';
+    setWordCount(text.trim().split(/\s+/).length);
+
+    // Save state for undo/redo
+    if (editorRef.current) {
+      const currentContent = editorRef.current.getEditor().root.innerHTML;
+      setUndoStack(prev => [...prev, currentContent]);
+      setRedoStack([]);
+    }
+  };
 
   // Initialize chat with greeting when component mounts
   useEffect(() => {
@@ -356,74 +454,79 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     }
   };
 
-  // Update handleImageUpload function to remove spinner
+  // Update handleImageUpload function to improve image handling
   const handleImageUpload = async (e) => {
     const files = Array.from(e.target.files);
     setIsImageUploading(true);
     
     try {
-    // Generate unique IDs for each image
-    const newPreviewImages = files.map(file => ({
-        id: `IMG_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        url: URL.createObjectURL(file),
-        name: file.name,
-        type: file.type,
-        size: file.size
-    }));
-    
-    setPreviewImages(prev => [...prev, ...newPreviewImages]);
-    setUploadedImages(prev => [...prev, ...files]);
+      // Generate unique IDs for each image with more readable names
+      const newPreviewImages = files.map(file => {
+        // Extract just the filename
+        const fileName = file.name;
+        
+        return {
+          id: `IMG_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          url: URL.createObjectURL(file),
+          name: fileName,
+          type: file.type,
+          size: file.size
+        };
+      });
+      
+      setPreviewImages(prev => [...prev, ...newPreviewImages]);
+      setUploadedImages(prev => [...prev, ...files]);
 
-    // After uploading images, prepare the document data
-    const documentJson = {
+      // After uploading images, prepare the document data
+      const documentJson = {
         discussionId,
         type: documentData.type,
         fields: documentData.fields,
         images: newPreviewImages.map(img => ({
-            id: img.id,
-            name: img.name,
-            type: img.type,
-            size: img.size,
-            url: img.url
+          id: img.id,
+          name: img.name,
+          type: img.type,
+          size: img.size,
+          url: img.url
         })),
         createdAt: new Date().toISOString()
-    };
+      };
 
-    // Load current documents data
-    const currentData = loadDocumentsData();
-    
-    // Update with new document
-    const updatedData = {
+      // Load current documents data
+      const currentData = loadDocumentsData();
+      
+      // Update with new document
+      const updatedData = {
         ...currentData,
         documents: {
-            ...currentData.documents,
-            [discussionId]: documentJson
+          ...currentData.documents,
+          [discussionId]: documentJson
         }
-    };
+      };
 
-    // Save to localStorage
-    saveDocument(updatedData);
+      // Save to localStorage
+      saveDocument(updatedData);
 
       // Add message to chat without loading state
       setMessages(prev => [...prev, {
-          id: Date.now(),
-          text: 'Upload image and click send to generate content.',
-          isBot: true
+        id: Date.now(),
+        text: 'Upload image and click send to generate content.',
+        isBot: true
       }]);
 
     } catch (error) {
       console.error('Error:', error);
       setMessages(prev => [...prev, {
-          id: Date.now(),
-          text: 'An error occurred while uploading images. Please try again.',
-          isBot: true
+        id: Date.now(),
+        text: 'An error occurred while uploading images. Please try again.',
+        isBot: true
       }]);
     } finally {
       setIsImageUploading(false);
     }
   };
 
-  // Update handleImageSubmit function to handle API call without sending images
+  // Update handleImageSubmit function to properly display images in the editor
   const handleImageSubmit = async () => {
     if (uploadedImages.length === 0) return;
 
@@ -471,7 +574,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       const saved = saveDocument(updatedData);
 
       if (saved) {
-        // Add images to chat with correct alignment
+        // Add images to chat with improved display
         setMessages(prev => [
           ...prev,
           {
@@ -514,22 +617,20 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
         setDocumentContent(pages);
         setTotalPages(pages.length);
 
-        // Generate HTML content for editor with images
+        // Generate improved HTML content for editor with images
         const editorContent = pages.map((page, index) => `
-          <div class="page" style="page-break-after: always;">
+          <div class="page" style="page-break-after: always; font-family: ${selectedFormat.fontFamily};">
             ${page}
           </div>
         `).join('') + `
-          <div class="page" style="page-break-after: always;">
-            <h2 class="text-xl font-bold mb-6">Event Images</h2>
-            <div class="grid grid-cols-2 gap-6">
-              ${previewImages.map(img => `
-                <div class="max-w-[300px]">
-                  <img src="${img.url}" alt="${img.name}" class="w-full h-auto object-contain rounded-lg shadow-lg" />
-                  <p class="text-sm text-gray-600 mt-2">${img.name}</p>
-                </div>
-              `).join('')}
-            </div>
+          <div class="event-images" style="margin-top: 2rem;">
+            <h2 style="font-size: 1.5rem; font-weight: bold; margin-bottom: 1.5rem; font-family: ${selectedFormat.fontFamily}; color: #2563eb; background-color: #f3f4f6; padding: 8px; border-radius: 4px;">Event Images</h2>
+            ${previewImages.map(img => `
+              <div style="margin-bottom: 1.5rem;">
+                <p style="font-size: 0.875rem; color: #4b5563; margin-bottom: 0.5rem; font-family: ${selectedFormat.fontFamily};">${img.name}</p>
+                <img src="${img.url}" alt="${img.name}" style="max-width: 100%; display: block; margin-bottom: 1rem; border-radius: 0.375rem;" />
+              </div>
+            `).join('')}
           </div>
         `;
 
@@ -613,16 +714,19 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     }
   };
 
-  // Update ImagePreview component for smaller images
+  // Update ImagePreview component
   const ImagePreview = ({ images, onRemove }) => {
     return (
-      <div className="flex flex-col gap-4 mt-2 p-2 bg-white rounded-lg border">
+      <div className="flex flex-col gap-4 mt-2 p-2 bg-white rounded-lg">
         {images.map((image, index) => (
-          <div key={index} className="relative group max-w-[200px]">
+          <div key={index} className="relative group max-w-[250px]">
+            <div className="bg-blue-500 text-white text-sm py-1 px-2 rounded-t-md">
+              {image.name}
+            </div>
             <img
               src={image.url}
               alt={image.name}
-              className="w-full h-auto object-contain rounded-lg border border-gray-200"
+              className="w-full h-auto object-contain rounded-b-md"
             />
             <button
               onClick={() => onRemove(index)}
@@ -630,14 +734,13 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
             >
               <X className="w-4 h-4" />
             </button>
-            <p className="text-sm text-gray-600 mt-2">{image.name}</p>
           </div>
         ))}
       </div>
     );
   };
 
-  // Update renderMessage function to show smaller images in chat
+  // Update renderMessage function to show full-size images in chat
   const renderMessage = (message) => {
     if (message.isLoading) {
       return (
@@ -646,8 +749,8 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
             <div className="flex items-center gap-2">
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
               <span>{message.text}</span>
-                </div>
             </div>
+          </div>
         </div>
       );
     }
@@ -662,8 +765,6 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       );
     }
 
-    const isUserUpload = message.isUserUpload;
-    
     return (
       <div
         key={message.id}
@@ -674,20 +775,20 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
             message.isBot
               ? 'bg-gray-100 text-gray-800'
               : 'bg-blue-600 text-white'
-          } max-w-[80%]`}
+          } max-w-[90%]`}
         >
           <div className="whitespace-pre-wrap font-sans">
             {message.text}
           </div>
           {message.images && (
-            <div className="flex flex-col gap-4 mt-4">
+            <div className="flex flex-wrap gap-4 mt-4">
               {message.images.map((image, index) => (
-                <div key={index} className="max-w-[200px]">
-                <img
-                  src={image.url}
-                  alt={`Uploaded ${index + 1}`}
-                    className="w-full h-auto object-contain rounded-lg border-2 border-white"
-                />
+                <div key={index} className="w-full max-w-[300px]">
+                  <img
+                    src={image.url}
+                    alt={`Uploaded ${index + 1}`}
+                    className="w-full h-auto object-contain rounded-lg"
+                  />
                   <p className="text-sm mt-2 text-gray-200">{image.name}</p>
                 </div>
               ))}
@@ -875,24 +976,14 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       setDocumentContent(pages);
       setTotalPages(pages.length);
 
-      // Generate HTML content for editor
-      const editorContent = pages.map((page, index) => `
-        <div class="page" style="page-break-after: always;">
-          ${page}
-        </div>
-      `).join('');
+      // Update editor content
+      setEditorContent(content);
 
-      // Update both chat and document panel
-      setEditorContent(editorContent);
+      // Update messages
       setMessages(prev => [...prev, {
         id: Date.now(),
         text: "Document has been generated successfully!",
         isBot: true
-      }, {
-        id: Date.now() + 1,
-        text: content,
-        isBot: true,
-        isContent: true
       }]);
 
       // Store the complete response for preview
@@ -969,52 +1060,120 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     handleSendMessage({ preventDefault: () => {} });
   };
 
-  const handleEditorChange = (e) => {
-    if (editorRef.current) {
-      const content = editorRef.current.innerHTML;
-      setEditorContent(content);
-      
-      // Update word count
-      const text = editorRef.current.innerText;
-      setWordCount(text.trim().split(/\s+/).length);
-    }
-  };
-
   const handleEditorKeyDown = (e) => {
-    // Remove all key event handling to allow default behavior
-    return true;
+    // Handle Ctrl+Z for undo
+    if (e.ctrlKey && e.key === 'z') {
+      e.preventDefault();
+      handleUndo();
+    }
+    
+    // Handle Ctrl+Y for redo
+    if (e.ctrlKey && e.key === 'y') {
+      e.preventDefault();
+      handleRedo();
+    }
+
+    // Save selection range when typing
+    const selection = window.getSelection();
+    if (selection.rangeCount > 0) {
+      setSelectedFormat(prev => ({
+        ...prev,
+        lastSelection: selection.getRangeAt(0).cloneRange()
+      }));
+    }
   };
 
   const handleFormatClick = (command, value = null) => {
     document.execCommand(command, false, value);
     if (editorRef.current) {
-      editorRef.current.focus();
+      editorRef.current.getEditor().focus();
+      restoreCursorPosition();
+      
+      // Ensure text direction is maintained
+      editorRef.current.getEditor().root.style.direction = 'ltr';
+      editorRef.current.getEditor().root.style.unicodeBidi = 'bidi-override';
     }
     handleEditorChange();
   };
 
   const generatePDF = () => {
-    const doc = new jsPDF();
-    
-    doc.setFont("Arial", "normal");
-    doc.setFontSize(12);
-    
-    const content = editorRef.current?.innerText || '';
-    const lines = doc.splitTextToSize(content, 180);
-    doc.text(lines, 10, 10);
-    
-    doc.save("document.pdf");
+    if (editorRef.current) {
+      const content = editorRef.current.getEditor().root.innerHTML;
+      const element = document.createElement('div');
+      element.innerHTML = content;
+      
+      const doc = new jsPDF();
+      doc.html(element, {
+        callback: function(doc) {
+          doc.save('document.pdf');
+        },
+        x: 10,
+        y: 10
+      });
+    }
   };
 
-  // Update the document panel content rendering
+  // Add function to handle format changes
+  const handleFormatChange = (property, value) => {
+    setSelectedFormat(prev => ({
+      ...prev,
+      [property]: value
+    }));
+
+    if (editorRef.current) {
+      editorRef.current.getEditor().root.style[property] = value;
+    }
+  };
+
+  // Add undo/redo handlers
+  const handleUndo = () => {
+    if (undoStack.length > 0) {
+      const previousContent = undoStack[undoStack.length - 1];
+      const currentContent = editorContent;
+      
+      setRedoStack(prev => [...prev, currentContent]);
+      setUndoStack(prev => prev.slice(0, -1));
+      setEditorContent(previousContent);
+      
+      if (editorRef.current) {
+        editorRef.current.getEditor().root.innerHTML = previousContent;
+      }
+    }
+  };
+
+  const handleRedo = () => {
+    if (redoStack.length > 0) {
+      const nextContent = redoStack[redoStack.length - 1];
+      const currentContent = editorContent;
+      
+      setUndoStack(prev => [...prev, currentContent]);
+      setRedoStack(prev => prev.slice(0, -1));
+      setEditorContent(nextContent);
+      
+      if (editorRef.current) {
+        editorRef.current.getEditor().root.innerHTML = nextContent;
+      }
+    }
+  };
+
+  // Add function to restore cursor position
+  const restoreCursorPosition = () => {
+    if (selectedFormat.lastSelection) {
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(selectedFormat.lastSelection);
+    }
+  };
+
+  // Update renderDocumentContent to use improved styling
   const renderDocumentContent = (content, isPreview = false) => {
     const containerClass = isPreview ? 'preview-container' : 'edit-container';
     
     const documentHeader = `
       <div class="document-header mb-8">
         <!-- Logo -->
-        <div class="flex justify-center mb-4 border-b pb-4">
-          <img src="${logoUrl}" alt="Company Logo" class="h-16 object-contain" />
+        <div class="flex justify-center mb-4 pb-4">
+          <img src="${logoUrl}" alt="Fxec Logo" class="w-full h-16 object-contain" />
         </div>
 
         <!-- Document Type -->
@@ -1024,7 +1183,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 
         <!-- Document Details -->
         <div class="mb-6">
-          <table class="w-full">
+          <table class="w-full border-collapse">
             <tbody>
               <tr>
                 <td class="py-2" style="width: 120px;"><span class="font-semibold">Topic</span></td>
@@ -1039,7 +1198,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
                 <td class="py-2">: ${documentData.fields?.['Event Date'] || ''}</td>
               </tr>
               <tr>
-                <td class="py-2"></td>
+                <td class="py-2">Guest Designation</td>
                 <td class="py-2 text-gray-600 pl-6">${documentData.fields?.['Guest Designation'] || ''}</td>
                 <td class="py-2"><span class="font-semibold">Coordinator</span></td>
                 <td class="py-2">: ${documentData.fields?.['Organizer Faculty Name'] || ''}</td>
@@ -1069,49 +1228,122 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       </div>
     `;
 
+    // Update editor content styles for images section with improved styling
+    const customStyles = `
+      <style>
+        body {
+          font-family: ${selectedFormat.fontFamily};
+          font-size: ${selectedFormat.fontSize};
+          line-height: 1.6;
+        }
+        .ql-editor {
+          font-family: ${selectedFormat.fontFamily} !important;
+          font-size: ${selectedFormat.fontSize} !important;
+          line-height: 1.6 !important;
+        }
+        .event-images h2 {
+          font-size: 1.5rem;
+          font-weight: bold;
+          margin-bottom: 1.5rem;
+          font-family: ${selectedFormat.fontFamily};
+          color: #2563eb;
+          background-color: #f3f4f6;
+          padding: 8px;
+          border-radius: 4px;
+        }
+        .event-image-container {
+          margin-bottom: 1.5rem;
+        }
+        .event-image-name {
+          font-size: 0.875rem;
+          color: #4b5563;
+          margin-bottom: 0.5rem;
+          font-family: ${selectedFormat.fontFamily};
+          background-color: #3b82f6;
+          color: white;
+          display: inline-block;
+          padding: 4px 8px;
+          border-radius: 4px;
+        }
+        .event-image {
+          max-width: 100%;
+          display: block;
+          margin-bottom: 1rem;
+          border-radius: 0.375rem;
+        }
+      </style>
+    `;
+
     return (
-      <div className={`${containerClass} w-full min-h-[500px] p-8 border rounded-lg bg-white prose max-w-none`}>
+      <div className={`${containerClass} w-full min-h-[500px] p-8 bg-white prose max-w-none`}>
         {/* Static Header Section */}
         <div dangerouslySetInnerHTML={{ 
-          __html: DOMPurify.sanitize(documentHeader, {
-            ADD_TAGS: ['img', 'table', 'tbody', 'tr', 'td', 'style'],
-            ADD_ATTR: ['src', 'alt', 'class', 'style', 'width']
-          })
+          __html: DOMPurify.sanitize(documentHeader + customStyles)
         }} />
         
-        {/* Content Section */}
+        {/* Content Section with improved styling */}
         <div className="mt-8">
           {isPreview ? (
             <div 
               className="min-h-[500px] prose max-w-none"
-              dangerouslySetInnerHTML={{ 
-                __html: DOMPurify.sanitize(content || '', {
-                  ADD_TAGS: ['img', 'div'],
-                  ADD_ATTR: ['src', 'alt', 'class', 'style']
-                })
-              }} 
-            />
-          ) : (
-            <div
-              ref={editorRef}
-              contentEditable
-              suppressContentEditableWarning={true}
-              className="min-h-[500px] outline-none prose max-w-none text-base"
               style={{
                 fontFamily: selectedFormat.fontFamily,
                 fontSize: selectedFormat.fontSize,
-                border: 'none',
-                background: 'transparent',
-                padding: '0',
                 lineHeight: '1.6'
               }}
-              onInput={handleEditorChange}
-              dangerouslySetInnerHTML={{ __html: content }}
+              dangerouslySetInnerHTML={{ 
+                __html: DOMPurify.sanitize(content || '')
+              }} 
+            />
+          ) : (
+            <ReactQuill
+              ref={editorRef}
+              theme="snow"
+              value={content}
+              onChange={handleEditorChange}
+              modules={modules}
+              formats={formats}
+              style={{ 
+                height: '500px',
+                fontFamily: selectedFormat.fontFamily,
+                fontSize: selectedFormat.fontSize
+              }}
+              className="h-[500px] mb-12 border-0"
             />
           )}
         </div>
       </div>
     );
+  };
+
+  // Update useEffect to initialize editor content
+  useEffect(() => {
+    if (editorRef.current && editorContent) {
+      setEditorContent(editorContent);
+    }
+  }, [editorContent]);
+
+  // Add function to handle paste events to clean up pasted content
+  const handlePaste = (e) => {
+    e.preventDefault();
+    
+    // Get pasted text
+    const text = e.clipboardData.getData('text/plain');
+    
+    // Insert text at cursor position
+    const selection = window.getSelection();
+    if (selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(document.createTextNode(text));
+      
+      // Move cursor to end of pasted text
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    
+    handleEditorChange();
   };
 
   // Add new function to handle PDF upload
@@ -1308,12 +1540,9 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
             {renderDocumentHeader()}
             <div className="flex-1 overflow-y-auto">
               {isEditing ? (
-                <>
-                  <EditorToolbar onFormatClick={handleFormatClick} />
-                  <div className="p-8">
-                    {renderDocumentContent(editorContent)}
-                  </div>
-                </>
+                <div className="p-8">
+                  {renderDocumentContent(editorContent)}
+                </div>
               ) : (
                 <div className="p-8">
                   {renderDocumentContent(documentContent[currentPage - 1], true)}
