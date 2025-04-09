@@ -4,7 +4,7 @@ import {
   ListOrdered, Link as LinkIcon, Heading1, Heading2,
   AlignLeft, AlignCenter, AlignRight, Underline,
   Type, Quote, Code, Eye, Edit, Calendar, Upload, X,
-  ChevronLeft, ChevronRight, FileUp, Save
+  ChevronLeft, ChevronRight, FileUp, Save, MessageSquare, List as ListIcon
 } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import ReactQuill from 'react-quill';
@@ -887,6 +887,19 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       );
     }
 
+    if (message.isError) {
+      return (
+        <div key={message.id} className="mb-4 text-left">
+          <div className="inline-block p-4 rounded-lg bg-red-50 text-red-700 border border-red-200 max-w-[90%]">
+            <div className="flex items-start gap-2">
+              <span className="text-red-500">⚠️</span>
+              <span>{message.text}</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     if (message.isContent) {
       return (
         <div key={message.id} className="mb-4 text-left">
@@ -958,7 +971,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
                     alt={`Uploaded ${index + 1}`}
                     className="w-full h-auto object-contain rounded-lg"
                   />
-                  <p className="text-sm mt-2 text-gray-200">{image.name}</p>
+                  <p className="text-sm mt-2 text-gray-600">{image.name}</p>
                 </div>
               ))}
             </div>
@@ -968,11 +981,38 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     );
   };
 
+  // Add a chat list toggle button to the chat header
+  const renderChatHeader = () => (
+    <div className="p-3 border-b bg-white flex justify-between items-center">
+      <div className="flex items-center gap-2">
+        <button 
+          onClick={() => setShowChatList(!showChatList)} 
+          className="p-2 rounded hover:bg-gray-100"
+          title="Chat History"
+        >
+          <ListIcon className="w-5 h-5 text-gray-600" />
+        </button>
+        <span className="font-medium">
+          {chatHistory[currentChatId]?.title || determineConversationTitle()}
+        </span>
+      </div>
+      <div>
+        <span className="text-sm text-gray-500">
+          {messages.length} messages
+        </span>
+      </div>
+    </div>
+  );
+
+  // New renderChatMessages function with header included
   const renderChatMessages = () => {
     return (
-      <div className="flex-1 overflow-y-auto p-4" ref={chatContainerRef}>
-        {messages.map((message) => renderMessage(message))}
-      </div>
+      <>
+        {renderChatHeader()}
+        <div className="flex-1 overflow-y-auto p-4" ref={chatContainerRef}>
+          {messages.map((message) => renderMessage(message))}
+        </div>
+      </>
     );
   };
 
@@ -1012,25 +1052,30 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       );
     }
 
-    // Regular chat input for other fields
+    // Regular chat input with clear command note
     return (
-      <form onSubmit={handleSendMessage} className="flex gap-2">
-        <input
-          type="text"
-          value={inputMessage}
-          onChange={(e) => setInputMessage(e.target.value)}
-          placeholder="Type your message..."
-          className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          disabled={isLoading}
-        />
-        <button
-          type="submit"
-          className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={isLoading}
-        >
-          <Send className="w-5 h-5" />
-        </button>
-      </form>
+      <div className="space-y-2">
+        <div className="text-red-500 text-sm font-medium px-2">
+          Note: Type 'clear' in the chat box to reset everything in the chat panel.
+        </div>
+        <form onSubmit={handleSendMessage} className="flex gap-2">
+          <input
+            type="text"
+            value={inputMessage}
+            onChange={(e) => setInputMessage(e.target.value)}
+            placeholder="Type your message..."
+            className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            disabled={isLoading}
+          />
+          <button
+            type="submit"
+            className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={isLoading}
+          >
+            <Send className="w-5 h-5" />
+          </button>
+        </form>
+      </div>
     );
   };
 
@@ -1122,13 +1167,22 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 
       const data = await response.json();
 
-      if (data.error) {
-        // Remove loading message and show error
-        setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
+      // Remove loading message first
+      setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
+
+      if (!response.ok) {
+        // Handle HTTP errors
+        throw new Error(data.detail || 'Failed to generate content');
+      }
+
+      if (data.error || data.detail) {
+        // Handle API errors
+        const errorMessage = data.detail || data.error || 'An error occurred while generating content';
         setMessages(prev => [...prev, {
           id: Date.now(),
-          text: `Error: ${data.error}`,
-          isBot: true
+          text: `Error: ${errorMessage}`,
+          isBot: true,
+          isError: true
         }]);
         return;
       }
@@ -1141,12 +1195,11 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 
       // Update editor content without changing cursor position
       setEditorContent(content);
-      
-      // Remove position cursor code to allow natural cursor position
 
-      // Remove loading message
-      setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
-      
+      // Store the content in localStorage
+      localStorage.setItem('documentEditorContent', content);
+      localStorage.setItem('documentContent', JSON.stringify(pages));
+
       // First show a success message
       setMessages(prev => [...prev, {
         id: Date.now(),
@@ -1200,6 +1253,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 
       // Store the complete response for preview
       setPreviewContent(data);
+      localStorage.setItem('previewContent', JSON.stringify(data));
       setWordCount(data.word_count);
 
       // Reset currentField to indicate all required fields are collected
@@ -1210,16 +1264,89 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 
     } catch (error) {
       console.error('Error:', error);
-      setMessages(prev => prev.filter(msg => msg.isLoading));
+      // Remove any existing loading message
+      setMessages(prev => prev.filter(msg => !msg.isLoading));
+      
+      // Add error message with proper formatting
       setMessages(prev => [...prev, {
         id: Date.now(),
-        text: 'An error occurred while generating the content. Please try again.',
-        isBot: true
+        text: `Error: ${error.message}`,
+        isBot: true,
+        isError: true
       }]);
     } finally {
       setIsLoading(false);
     }
   };
+
+  // Update useEffect to load saved content on mount
+  useEffect(() => {
+    // Load saved chats from localStorage
+    const savedChats = localStorage.getItem('documentGeneratorChats');
+    if (savedChats) {
+      try {
+        const parsedChats = JSON.parse(savedChats);
+        setChatHistory(parsedChats);
+        
+        // Find the most recent chat and set it as the current chat
+        const chatEntries = Object.entries(parsedChats);
+        if (chatEntries.length > 0) {
+          // Sort chats by lastUpdated timestamp (newest first)
+          chatEntries.sort((a, b) => {
+            return new Date(b[1].lastUpdated) - new Date(a[1].lastUpdated);
+          });
+          
+          // Use the most recent chat
+          const [recentChatId, recentChat] = chatEntries[0];
+          setCurrentChatId(recentChatId);
+          setDiscussionId(recentChatId);
+          
+          // Load the messages from this chat
+          setMessages(recentChat.messages || []);
+          
+          // Load document data if available
+          if (recentChat.documentData) {
+            setDocumentData(recentChat.documentData);
+          }
+
+          // Load saved editor content
+          const savedEditorContent = localStorage.getItem('documentEditorContent');
+          if (savedEditorContent) {
+            setEditorContent(savedEditorContent);
+          }
+
+          // Load saved document content
+          const savedDocumentContent = localStorage.getItem('documentContent');
+          if (savedDocumentContent) {
+            const parsedContent = JSON.parse(savedDocumentContent);
+            setDocumentContent(parsedContent);
+            setTotalPages(parsedContent.length);
+          }
+
+          // Load saved preview content
+          const savedPreviewContent = localStorage.getItem('previewContent');
+          if (savedPreviewContent) {
+            setPreviewContent(JSON.parse(savedPreviewContent));
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing saved chats:', e);
+      }
+    }
+  }, []);
+
+  // Add new useEffect to save content when it changes
+  useEffect(() => {
+    if (editorContent) {
+      localStorage.setItem('documentEditorContent', editorContent);
+    }
+    if (documentContent.length > 0) {
+      localStorage.setItem('documentContent', JSON.stringify(documentContent));
+    }
+    if (previewContent) {
+      localStorage.setItem('previewContent', JSON.stringify(previewContent));
+    }
+  }, [editorContent, documentContent, previewContent]);
 
   // Add pagination controls to the editor section
   const renderPagination = () => {
@@ -1256,6 +1383,12 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     const userMessage = inputMessage.trim();
     setInputMessage('');
     
+    // Check for clear command
+    if (userMessage.toLowerCase() === 'clear') {
+      clearChat();
+      return;
+    }
+    
     // Add user message to chat
     setMessages(prev => [...prev, {
       id: prev.length + 1,
@@ -1265,6 +1398,59 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 
     // Handle the message flow
     handleDocumentFlow(userMessage);
+  };
+
+  const clearChat = () => {
+    // Reset messages to initial welcome message
+    setMessages([{
+      id: 1,
+      text: `Hello! I'm Siraj AI! I can help you create various types of documents. Please select from the following options:
+
+1. Minutes of Department Meeting
+2. Master list of documents
+3. Subject Allocation
+4. Requirement of Staff Members
+5. Lab Manual
+6. List of Experiments
+7. Workload Allocation
+8. Individual Time Table
+9. Master Time Table
+10. Coaching Class Time Table
+11. Guest Lecture
+
+Or, if you have an existing PDF report, click the "Upload PDF" button below to extract and edit its content.`,
+      isBot: true,
+    }]);
+
+    // Reset document data
+    setDocumentData({
+      type: null,
+      currentField: null,
+      fields: {}
+    });
+
+    // Reset editor content
+    setEditorContent('');
+    setDocumentContent(['']);
+    setCurrentPage(1);
+    setTotalPages(1);
+
+    // Reset all option states
+    setShowDepartmentOptions(false);
+    setShowYearOptions(false);
+    setShowDatePicker(false);
+    setShowPdfUpload(false);
+
+    // Reset image states
+    setUploadedImages([]);
+    setPreviewImages([]);
+    
+    // Reset format
+    setSelectedFormat(prev => ({
+      ...prev,
+      fontFamily: 'Arial',
+      fontSize: '16px'
+    }));
   };
 
   const handleDepartmentSelect = (department) => {
@@ -1386,134 +1572,98 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 
   // Update renderDocumentContent to use CustomQuillEditor
   const renderDocumentContent = (content, isPreview = false) => {
-    const containerClass = isPreview ? 'preview-container' : 'edit-container';
-    
     const documentHeader = `
-      <div class="document-header mb-8" style="font-family: system-ui, -apple-system, sans-serif;">
-        <!-- Logo -->
-        <div class="flex justify-center mb-4 pb-4">
-          <img src="${logoUrl}" alt="Fxec Logo" class="w-full h-16 object-contain" />
+      <div class="document-header w-full mx-auto mb-8">
+        <!-- Logo and Title Section -->
+        <div class="flex flex-col items-center mb-8">
+          <img src="${logoUrl}" alt="FXEC Logo" class="h-16 mb-4" />
+          <h1 class="text-2xl font-bold tracking-wide text-gray-900 uppercase mb-2">
+            ${documentData.type === 'GuestLecture' ? 'GUEST LECTURE REPORT' : 'REPORT'}
+          </h1>
+          <div class="w-48 h-1 bg-blue-600 mx-auto"></div>
         </div>
 
-        <!-- Document Type -->
-        <div class="text-center mb-6">
-          <h1 class="text-2xl font-bold tracking-wide">GUEST LECTURE REPORT</h1>
-        </div>
+        <!-- Document Details Section -->
+        <div class="w-full p-6">
+          <div class="grid grid-cols-2 gap-x-12 gap-y-4">
+            <!-- Left Column -->
+            <div class="space-y-4">
+              <div class="flex">
+                <div class="w-36">
+                  <span class="font-semibold text-gray-800">Topic:</span>
+                </div>
+                <div class="flex-1">
+                  <span class="text-gray-700">${documentData.fields?.Topic || ''}</span>
+                </div>
+              </div>
 
-        <!-- Document Details -->
-        <div class="mb-6">
-          <table class="w-full border-collapse">
-            <tbody>
-              <tr>
-                <td class="py-2" style="width: 120px;"><span class="font-semibold">Topic</span></td>
-                <td class="py-2" style="width: 300px;">: ${documentData.fields?.Topic || ''}</td>
-                <td class="py-2" style="width: 120px;"><span class="font-semibold">Activity Code</span></td>
-                <td class="py-2">: ${documentData.fields?.['Activity Code'] || ''}</td>
-              </tr>
-              <tr>
-                <td class="py-2"><span class="font-semibold">Guest</span></td>
-                <td class="py-2">: ${documentData.fields?.['Guest Name'] || ''}</td>
-                <td class="py-2"><span class="font-semibold">Event Date</span></td>
-                <td class="py-2">: ${documentData.fields?.['Event Date'] || ''}</td>
-              </tr>
-              <tr>
-                <td class="py-2">Guest Designation</td>
-                <td class="py-2 text-gray-600 pl-6">${documentData.fields?.['Guest Designation'] || ''}</td>
-                <td class="py-2"><span class="font-semibold">Coordinator</span></td>
-                <td class="py-2">: ${documentData.fields?.['Organizer Faculty Name'] || ''}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+              <div class="flex">
+                <div class="w-36">
+                  <span class="font-semibold text-gray-800">Guest Name:</span>
+                </div>
+                <div class="flex-1">
+                  <span class="text-gray-700">${documentData.fields?.['Guest Name'] || ''}</span>
+                </div>
+              </div>
 
-        <!-- Additional Details -->
-        <div class="flex justify-between text-sm mb-6">
-          <div style="width: 300px;" class="flex">
-            <span class="font-semibold" style="width: 120px;">Department</span>
-            <span>: ${documentData.fields?.['Organizer Department'] || ''}</span>
+              <div class="flex">
+                <div class="w-36">
+                  <span class="font-semibold text-gray-800">Designation:</span>
+                </div>
+                <div class="flex-1">
+                  <span class="text-gray-700">${documentData.fields?.['Guest Designation'] || ''}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right Column -->
+            <div class="space-y-4">
+              <div class="flex justify-end">
+                <div class="flex items-center">
+                  <span class="font-semibold text-gray-800 mr-4">Event Date:</span>
+                  <span class="text-gray-700">${documentData.fields?.['Event Date'] || ''}</span>
+                </div>
+              </div>
+
+              <div class="flex justify-end">
+                <div class="flex items-center">
+                  <span class="font-semibold text-gray-800 mr-4">Activity Code:</span>
+                  <span class="text-gray-700">${documentData.fields?.['Activity Code'] || ''}</span>
+                </div>
+              </div>
+
+              <div class="flex justify-end">
+                <div class="flex items-center">
+                  <span class="font-semibold text-gray-800 mr-4">Coordinator:</span>
+                  <span class="text-gray-700">${documentData.fields?.['Organizer Faculty Name'] || ''}</span>
+                </div>
+              </div>
+            </div>
           </div>
-          <div style="width: 250px;" class="flex">
-            <span class="font-semibold" style="width: 120px;">Year</span>
-            <span>: ${documentData.fields?.Year || ''}</span>
-          </div>
-          <div style="width: 300px;" class="flex">
-            <span class="font-semibold" style="width: 180px;">Expected Participants</span>
-            <span>: ${documentData.fields?.['No Of Count'] || ''}</span>
-          </div>
         </div>
 
-        <!-- Divider -->
-        <hr class="border-t-2 border-gray-300 mb-6">
+        <!-- Content Separator -->
+        <div class="my-8 flex items-center justify-center">
+          <div class="w-full border-t border-gray-300"></div>
+        </div>
       </div>
     `;
 
-    // Update editor content styles with improved image handling
-    const customStyles = `
-      <style>
-        .ql-editor {
-          font-family: ${selectedFormat.fontFamily}, sans-serif;
-          font-size: ${selectedFormat.fontSize};
-          line-height: 1.6;
-        }
-        .event-images h2 {
-          font-size: 1.5rem;
-          font-weight: bold;
-          margin-bottom: 1.5rem;
-          font-family: ${selectedFormat.fontFamily}, sans-serif;
-          color: #2563eb;
-          background-color: #f3f4f6;
-          padding: 8px;
-          border-radius: 4px;
-        }
-        .event-image-container {
-          margin-bottom: 1.5rem;
-        }
-        .event-image-name {
-          font-size: 0.875rem;
-          color: #4b5563;
-          margin-bottom: 0.5rem;
-          font-family: ${selectedFormat.fontFamily}, sans-serif;
-          background-color: #3b82f6;
-          color: white;
-          display: inline-block;
-          padding: 4px 8px;
-          border-radius: 4px;
-        }
-        .event-image {
-          max-width: 100%;
-          display: block;
-          margin-bottom: 1rem;
-          border-radius: 0.375rem;
-        }
-        
-        /* Better image handling for preview mode */
-        .document-content img {
-          max-width: 100%;
-          height: auto;
-          border-radius: 8px;
-          margin: 1rem 0;
-          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-        }
-      </style>
-    `;
-
     return (
-      <div className={`${containerClass} w-full min-h-[500px] p-8 bg-white prose max-w-none`}>
-        {/* Static Header Section */}
-        <div dangerouslySetInnerHTML={{ 
-          __html: DOMPurify.sanitize(documentHeader + customStyles)
-        }} />
+      <div className={`${isPreview ? 'preview-container' : 'edit-container'} w-full min-h-[500px] p-8 bg-white prose max-w-none`}>
+        {/* Header Section - Always uses system font */}
+        <div 
+          className="document-header-section" 
+          style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}
+          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(documentHeader) }}
+        />
         
-        {/* Content Section with improved styling */}
-        <div className="mt-8 document-content-area">
+        {/* Content Section - Uses selected font */}
+        <div className="document-content-area mt-8">
           {isPreview ? (
             <div 
-              className="min-h-[500px] prose max-w-none document-content"
-              style={{
-                fontFamily: selectedFormat.fontFamily,
-                fontSize: selectedFormat.fontSize,
-                lineHeight: '1.6'
-              }}
+              className="min-h-[500px] prose max-w-none"
+              style={{ fontFamily: `${selectedFormat.fontFamily}, sans-serif` }}
               dangerouslySetInnerHTML={{ 
                 __html: DOMPurify.sanitize(content || '')
               }} 
@@ -1523,11 +1673,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
               ref={editorRef}
               value={content}
               onChange={handleEditorChange}
-              style={{ 
-                height: '500px',
-                fontFamily: selectedFormat.fontFamily,
-                fontSize: selectedFormat.fontSize
-              }}
+              style={{ height: '500px' }}
               className="h-[500px] mb-12 border-0 document-editor"
             />
           )}
@@ -1535,13 +1681,6 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       </div>
     );
   };
-
-  // Update useEffect to initialize editor content
-  useEffect(() => {
-    if (editorRef.current && editorContent) {
-      setEditorContent(editorContent);
-    }
-  }, [editorContent]);
 
   // Add function to handle paste events to clean up pasted content
   const handlePaste = (e) => {
@@ -1631,54 +1770,91 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     }
   };
 
-  // Add PDF upload button to the document header
+  // Add function to clear editor content
+  const handleClearDocument = () => {
+    // Show confirmation dialog before clearing
+    if (window.confirm('Are you sure you want to clear all content? This action cannot be undone.')) {
+      // Clear editor content
+      if (editorRef.current) {
+        editorRef.current.getEditor().setText('');
+      }
+      // Reset document content
+      setEditorContent('');
+      setDocumentContent(['']);
+      // Show notification
+      setNotification({
+        type: 'success',
+        message: 'Document content cleared successfully'
+      });
+      setShowNotification(true);
+      setTimeout(() => setShowNotification(false), 3000);
+    }
+  };
+
+  // Update the document header to include the Clear button
   const renderDocumentHeader = () => {
+    // Determine the document title based on type
+    const getDocumentTitle = () => {
+      if (documentData.type === 'GuestLecture') {
+        return 'GUEST LECTURE REPORT';
+      }
+      return 'REPORT';
+    };
+
     return (
-      <div className="p-4 bg-white border-b flex justify-between items-center">
-        <div className="flex items-center space-x-2">
-          <FileText className="w-5 h-5 text-gray-600" />
-          <span className="font-medium">Document Editor</span>
-        </div>
-        <div className="flex space-x-2">
-          {isEditing && (
-            <button
-              onClick={handleSaveDocument}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
-            >
-              <Save className="w-4 h-4" />
-              <span>Save Changes</span>
-            </button>
-          )}
-          <button
-            onClick={() => setShowPdfUpload(true)}
-            className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2"
-          >
-            <FileUp className="w-4 h-4" />
-            <span>Upload PDF</span>
-          </button>
-          <button
-            onClick={() => setIsEditing(!isEditing)}
-            className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2"
-          >
-            {isEditing ? (
-              <>
-                <Eye className="w-4 h-4" />
-                <span>Preview</span>
-              </>
-            ) : (
-              <>
-                <Edit className="w-4 h-4" />
-                <span>Edit</span>
-              </>
-            )}
-          </button>
-          <button 
-            onClick={generatePDF}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
-          >
-            <Download className="w-4 h-4" />
-            <span>Export PDF</span>
-          </button>
+      <div className="bg-white border-b w-full">
+        <div className="w-full mx-auto">
+          <div className="flex items-center justify-between px-6 py-4">
+            <div className="flex items-center space-x-4">
+              <h1 className="text-xl font-bold text-gray-900 tracking-wide">
+                {getDocumentTitle()}
+              </h1>
+            </div>
+            <div className="flex items-center space-x-3">
+              {isEditing && (
+                <button
+                  onClick={handleSaveDocument}
+                  className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2 text-sm font-medium shadow-sm"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>Save Changes</span>
+                </button>
+              )}
+              {/* Only show PDF upload button when no document type is selected */}
+              {!documentData.type && (
+                <button
+                  onClick={() => setShowPdfUpload(true)}
+                  className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm font-medium shadow-sm"
+                >
+                  <FileUp className="w-4 h-4" />
+                  <span>Upload PDF</span>
+                </button>
+              )}
+              <button
+                onClick={() => setIsEditing(!isEditing)}
+                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm font-medium shadow-sm"
+              >
+                {isEditing ? (
+                  <>
+                    <Eye className="w-4 h-4" />
+                    <span>Preview</span>
+                  </>
+                ) : (
+                  <>
+                    <Edit className="w-4 h-4" />
+                    <span>Edit</span>
+                  </>
+                )}
+              </button>
+              <button 
+                onClick={generatePDF}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 text-sm font-medium shadow-sm"
+              >
+                <Download className="w-4 h-4" />
+                <span>Export PDF</span>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -1955,7 +2131,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       ([key, value]) => value === fontFamily
     )?.[0] || fontFamily;
     
-    // Update the document font
+    // Update the document font in the state
     setSelectedFormat(prev => ({
       ...prev,
       fontFamily
@@ -1969,16 +2145,51 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
         // Save current selection before formatting
         const currentSelection = editor.getSelection();
         
-        // Get the current content and length
-        const length = editor.getLength();
+        // Get the content
+        const content = editor.getText();
         
-        // Target only the editor content by formatting just the text content
-        // Format only the content area, not headers or other parts
-        editor.formatText(0, length, 'font', cssSafeFontName);
+        // Find the position after the header (after the first two newlines)
+        let startIndex = 0;
+        let newlineCount = 0;
+        for (let i = 0; i < content.length; i++) {
+          if (content[i] === '\n') {
+            newlineCount++;
+            if (newlineCount === 2) {
+              startIndex = i + 1;
+              break;
+            }
+          }
+        }
         
-        // Also update the CSS to ensure the font is applied correctly
-        const editorElement = editor.root;
-        editorElement.style.fontFamily = `${fontFamily}, sans-serif`;
+        // If we couldn't find two newlines, set a default position
+        if (startIndex === 0) {
+          startIndex = content.indexOf('\n') + 1 || 0;
+        }
+        
+        // Format only the document content area
+        const contentLength = editor.getLength() - startIndex;
+        if (contentLength > 0) {
+          editor.formatText(startIndex, contentLength, 'font', cssSafeFontName);
+        }
+        
+        // Update the CSS for the content area
+        const editorElement = editor.root.querySelector('.ql-editor');
+        if (editorElement) {
+          // Create or update the style element for the content area
+          let styleEl = document.getElementById('content-area-style');
+          if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'content-area-style';
+            document.head.appendChild(styleEl);
+          }
+          
+          // Apply styles that target only the content area
+          styleEl.textContent = `
+            .ql-editor > *:not(:first-child) {
+              font-family: "${fontFamily}", sans-serif !important;
+            }
+          `;
+        }
         
         // Restore selection if it existed
         if (currentSelection) {
@@ -1991,25 +2202,17 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
           text: `Font changed to ${fontFamily} for document content.`,
           isBot: true
         }]);
+
       } catch (err) {
         console.error('Error applying font:', err);
         
-        // Fallback to CSS styling if Quill API fails
-        try {
-          const editorElement = document.querySelector('.ql-editor');
-          if (editorElement) {
-            editorElement.style.fontFamily = `${fontFamily}, sans-serif`;
-            
-            // Add confirmation message even with fallback method
-            setMessages(prev => [...prev, {
-              id: Date.now(),
-              text: `Font changed to ${fontFamily} for document content (using fallback method).`,
-              isBot: true
-            }]);
-          }
-        } catch (cssErr) {
-          console.error('Fallback font styling also failed:', cssErr);
-        }
+        // Show error message
+        setMessages(prev => [...prev, {
+          id: Date.now(),
+          text: `Error changing font: ${err.message}`,
+          isBot: true,
+          isError: true
+        }]);
       }
     }
   };
@@ -2072,6 +2275,604 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     }
   }, [isEditing]);
 
+  // Add new state variables for chat management
+  const [chatHistory, setChatHistory] = useState({});
+  const [currentChatId, setCurrentChatId] = useState(null);
+  const [showChatList, setShowChatList] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [chatToDelete, setChatToDelete] = useState(null);
+  const [notification, setNotification] = useState({ type: '', message: '' });
+  const [showNotification, setShowNotification] = useState(false);
+  
+  // Function to create a new chat
+  const createNewChat = () => {
+    // Create a new chat ID
+    const newChatId = `chat_${Date.now()}`;
+    
+    // Reset all data
+    setMessages([{
+      id: 1,
+      text: `Hello! I'm Siraj AI! I can help you create various types of documents. Please select from the following options:
+
+1. Minutes of Department Meeting
+2. Master list of documents
+3. Subject Allocation
+4. Requirement of Staff Members
+5. Lab Manual
+6. List of Experiments
+7. Workload Allocation
+8. Individual Time Table
+9. Master Time Table
+10. Coaching Class Time Table
+11. Guest Lecture
+
+Or, if you have an existing PDF report, click the "Upload PDF" button below to extract and edit its content.`,
+      isBot: true,
+    }]);
+    
+    setDocumentData({
+      type: null,
+      currentField: null,
+      fields: {}
+    });
+    
+    setEditorContent('');
+    setDocumentContent([]);
+    
+    // Set as current chat
+    setCurrentChatId(newChatId);
+    setDiscussionId(newChatId);
+    
+    // Close chat list
+    setShowChatList(false);
+    
+    // Add the new chat to history
+    const newChat = {
+      id: newChatId,
+      messages: [{
+        id: 1,
+        text: `Hello! I'm Siraj AI! I can help you create various types of documents. Please select from the following options:
+
+1. Minutes of Department Meeting
+2. Master list of documents
+3. Subject Allocation
+4. Requirement of Staff Members
+5. Lab Manual
+6. List of Experiments
+7. Workload Allocation
+8. Individual Time Table
+9. Master Time Table
+10. Coaching Class Time Table
+11. Guest Lecture
+
+Or, if you have an existing PDF report, click the "Upload PDF" button below to extract and edit its content.`,
+        isBot: true,
+      }],
+      lastUpdated: new Date().toISOString(),
+      title: 'New Chat',
+      documentData: {
+        type: null,
+        currentField: null,
+        fields: {}
+      }
+    };
+    
+    setChatHistory(prev => ({
+      ...prev,
+      [newChatId]: newChat
+    }));
+    
+    // Save to localStorage
+    try {
+      const updatedHistory = {
+        ...chatHistory,
+        [newChatId]: newChat
+      };
+      localStorage.setItem('documentGeneratorChats', JSON.stringify(updatedHistory));
+    } catch (e) {
+      console.error('Error saving new chat to history:', e);
+    }
+  };
+
+  // Initialize chat system - run only once on component mount
+  useEffect(() => {
+    // Load saved chats from localStorage
+    const savedChats = localStorage.getItem('documentGeneratorChats');
+    if (savedChats) {
+      try {
+        const parsedChats = JSON.parse(savedChats);
+        setChatHistory(parsedChats);
+        
+        // Find the most recent chat and set it as the current chat
+        const chatEntries = Object.entries(parsedChats);
+        if (chatEntries.length > 0) {
+          // Sort chats by lastUpdated timestamp (newest first)
+          chatEntries.sort((a, b) => {
+            return new Date(b[1].lastUpdated) - new Date(a[1].lastUpdated);
+          });
+          
+          // Use the most recent chat
+          const [recentChatId, recentChat] = chatEntries[0];
+          setCurrentChatId(recentChatId);
+          setDiscussionId(recentChatId);
+          
+          // Load the messages from this chat
+          setMessages(recentChat.messages || []);
+          
+          // Load document data if available
+          if (recentChat.documentData) {
+            setDocumentData(recentChat.documentData);
+          }
+
+          // Load saved editor content
+          const savedEditorContent = localStorage.getItem('documentEditorContent');
+          if (savedEditorContent) {
+            setEditorContent(savedEditorContent);
+          }
+
+          // Load saved document content
+          const savedDocumentContent = localStorage.getItem('documentContent');
+          if (savedDocumentContent) {
+            const parsedContent = JSON.parse(savedDocumentContent);
+            setDocumentContent(parsedContent);
+            setTotalPages(parsedContent.length);
+          }
+
+          // Load saved preview content
+          const savedPreviewContent = localStorage.getItem('previewContent');
+          if (savedPreviewContent) {
+            setPreviewContent(JSON.parse(savedPreviewContent));
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing saved chats:', e);
+      }
+    }
+    // Note: We don't automatically create a new chat here anymore
+  }, []);
+  
+  // Make sure there's always at least one chat to display content
+  useEffect(() => {
+    // Check if we have no current chat ID but need to interact with the page
+    if (!currentChatId && messages.length === 0) {
+      // No chat is loaded yet, but we won't create one until user clicks the button
+      // This ensures the user has control over chat creation
+      console.log("No chat selected. Use the 'New Chat' button to create one.");
+    }
+  }, [currentChatId, messages]);
+
+  // Save chat history whenever messages change
+  useEffect(() => {
+    if (currentChatId && messages.length > 0) {
+      // Update the chat history with current messages
+      const updatedHistory = {
+        ...chatHistory,
+        [currentChatId]: {
+          id: currentChatId,
+          messages: messages,
+          lastUpdated: new Date().toISOString(),
+          title: determineConversationTitle(),
+          documentData: documentData
+        }
+      };
+      
+      setChatHistory(updatedHistory);
+      
+      // Save to localStorage
+      try {
+        localStorage.setItem('documentGeneratorChats', JSON.stringify(updatedHistory));
+      } catch (e) {
+        console.error('Error saving chat history:', e);
+      }
+    }
+  }, [messages, documentData]);
+  
+  // Function to determine a title for the conversation based on content
+  const determineConversationTitle = () => {
+    if (documentData.type) {
+      // If we have a document type, use that for the title
+      return `${documentData.type} - ${new Date().toLocaleDateString()}`;
+    } else if (messages.length > 0) {
+      // Otherwise use the first few words of the first message
+      const firstUserMessage = messages.find(m => !m.isBot)?.text;
+      if (firstUserMessage) {
+        const words = firstUserMessage.split(' ').slice(0, 5).join(' ');
+        return words + (words.length < firstUserMessage.length ? '...' : '');
+      }
+    }
+    return `New Chat - ${new Date().toLocaleDateString()}`;
+  };
+  
+  // Function to load a previous chat
+  const loadChat = (chatId) => {
+    if (chatHistory[chatId]) {
+      // Load messages
+      setMessages(chatHistory[chatId].messages);
+      
+      // Load document data if available
+      if (chatHistory[chatId].documentData) {
+        setDocumentData(chatHistory[chatId].documentData);
+      }
+      
+      // Set as current chat
+      setCurrentChatId(chatId);
+      setDiscussionId(chatId);
+      
+      // Close chat list
+      setShowChatList(false);
+    }
+  };
+  
+  // Function to delete a chat
+  const deleteChat = (chatId) => {
+    // Create a copy of chat history without the deleted chat
+    const updatedHistory = { ...chatHistory };
+    delete updatedHistory[chatId];
+    
+    // Update state
+    setChatHistory(updatedHistory);
+    
+    // Save to localStorage
+    localStorage.setItem('documentGeneratorChats', JSON.stringify(updatedHistory));
+    
+    // If we deleted the current chat
+    if (chatId === currentChatId) {
+      // Get all remaining chat IDs
+      const remainingChatIds = Object.keys(updatedHistory);
+      
+      if (remainingChatIds.length > 0) {
+        // Sort by lastUpdated (newest first)
+        remainingChatIds.sort((a, b) => {
+          return new Date(updatedHistory[b].lastUpdated) - new Date(updatedHistory[a].lastUpdated);
+        });
+        
+        // Get the most recent chat
+        const nextChatId = remainingChatIds[0];
+        
+        // Load the next chat
+        loadChat(nextChatId);
+      } else {
+        // No chats remaining, reset to welcome screen
+        setCurrentChatId(null);
+        setDiscussionId(null);
+        
+        // Reset messages and document data
+        setMessages([]);
+        setDocumentData({
+          type: null,
+          currentField: null,
+          fields: {}
+        });
+        
+        // Reset editor content
+        setEditorContent('');
+        setDocumentContent([]);
+        
+        // Close chat list
+        setShowChatList(false);
+      }
+    }
+    
+    // Show success notification
+    setNotification({
+      type: 'success',
+      message: 'Chat deleted successfully'
+    });
+    setShowNotification(true);
+    
+    // Hide notification after 3 seconds
+    setTimeout(() => {
+      setShowNotification(false);
+    }, 3000);
+  };
+  
+  // Function to confirm chat deletion
+  const confirmDeleteChat = (chatId) => {
+    setChatToDelete(chatId);
+    setShowDeleteConfirm(true);
+  };
+  
+  // Function to handle confirmed deletion
+  const handleConfirmedDelete = () => {
+    if (chatToDelete) {
+      deleteChat(chatToDelete);
+      setShowDeleteConfirm(false);
+      setChatToDelete(null);
+    }
+  };
+  
+  // Function to cancel deletion
+  const cancelDelete = () => {
+    setShowDeleteConfirm(false);
+    setChatToDelete(null);
+  };
+  
+  // Function to export chat to JSON file
+  const exportChatAsJson = (chatId) => {
+    if (chatHistory[chatId]) {
+      const chatData = chatHistory[chatId];
+      const dataStr = JSON.stringify(chatData, null, 2);
+      const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+      
+      const exportFileDefaultName = `chat-export-${chatId}.json`;
+      
+      const linkElement = document.createElement('a');
+      linkElement.setAttribute('href', dataUri);
+      linkElement.setAttribute('download', exportFileDefaultName);
+      linkElement.click();
+    }
+  };
+  
+  // Function to import chat from JSON file
+  const importChatFromJson = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const chatData = JSON.parse(e.target.result);
+        if (chatData.id && chatData.messages) {
+          // Add to chat history
+          const updatedHistory = {
+            ...chatHistory,
+            [chatData.id]: chatData
+          };
+          
+          setChatHistory(updatedHistory);
+          localStorage.setItem('documentGeneratorChats', JSON.stringify(updatedHistory));
+          
+          // Load the imported chat
+          loadChat(chatData.id);
+          
+          // Show success notification
+          setNotification({
+            type: 'success',
+            message: 'Chat imported successfully'
+          });
+          setShowNotification(true);
+          
+          // Hide notification after 3 seconds
+          setTimeout(() => {
+            setShowNotification(false);
+          }, 3000);
+        } else {
+          throw new Error('Invalid chat data format');
+        }
+      } catch (error) {
+        console.error('Error importing chat:', error);
+        setMessages(prev => [...prev, {
+          id: Date.now(),
+          text: "Error importing chat: Invalid format",
+          isBot: true
+        }]);
+        
+        // Show error notification
+        setNotification({
+          type: 'error',
+          message: 'Error importing chat: Invalid format'
+        });
+        setShowNotification(true);
+        
+        // Hide notification after 3 seconds
+        setTimeout(() => {
+          setShowNotification(false);
+        }, 3000);
+      }
+    };
+    
+    reader.readAsText(file);
+  };
+
+  // Render the chat list
+  const renderChatList = () => {
+    // Convert chat history object to array and sort by last updated time
+    const chats = Object.values(chatHistory).sort((a, b) => 
+      new Date(b.lastUpdated) - new Date(a.lastUpdated)
+    );
+    
+    return (
+      <div className="absolute left-0 top-0 w-64 h-full bg-white border-r shadow-lg z-50 overflow-y-auto">
+        <div className="p-3 border-b flex justify-between items-center bg-blue-600 text-white">
+          <h3 className="font-semibold">Conversations</h3>
+          <button onClick={() => setShowChatList(false)} className="p-1 hover:bg-blue-700 rounded">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        
+        <div className="p-2">
+          <button 
+            onClick={createNewChat}
+            className="w-full p-2 mb-3 bg-blue-600 text-white rounded flex items-center justify-center gap-2 hover:bg-blue-700"
+          >
+            <MessageSquare className="w-4 h-4" />
+            <span>New Chat</span>
+          </button>
+          
+          <div className="flex justify-between mb-3">
+            <input 
+              type="file" 
+              id="import-chat" 
+              accept=".json" 
+              onChange={importChatFromJson} 
+              className="hidden" 
+            />
+            <label 
+              htmlFor="import-chat" 
+              className="p-2 bg-gray-200 rounded text-xs cursor-pointer hover:bg-gray-300 flex-1 text-center mr-1"
+            >
+              Import Chat
+            </label>
+            
+            <button 
+              onClick={() => exportChatAsJson(currentChatId)}
+              className="p-2 bg-gray-200 rounded text-xs hover:bg-gray-300 flex-1 ml-1"
+              disabled={!currentChatId || !chatHistory[currentChatId]}
+            >
+              Export Current
+            </button>
+          </div>
+        </div>
+        
+        <div className="chat-list">
+          {chats.length === 0 ? (
+            <div className="p-3 text-center text-gray-500 text-sm">
+              No saved conversations
+            </div>
+          ) : (
+            chats.map(chat => (
+              <div 
+                key={chat.id} 
+                className={`p-3 border-b cursor-pointer hover:bg-gray-100 flex justify-between items-center ${
+                  chat.id === currentChatId ? 'bg-blue-50 border-l-4 border-l-blue-600' : ''
+                }`}
+                onClick={() => loadChat(chat.id)}
+              >
+                <div className="flex-1 truncate pr-2">
+                  <div className="font-medium text-sm">{chat.title || 'Untitled Chat'}</div>
+                  <div className="text-xs text-gray-500">
+                    {new Date(chat.lastUpdated).toLocaleString()}
+                  </div>
+                </div>
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    confirmDeleteChat(chat.id);
+                  }}
+                  className="p-1 text-gray-500 hover:text-red-500 hover:bg-gray-200 rounded"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // Add a new function to render chat tabs at the top
+  const renderChatTabs = () => {
+    // Convert chat history object to array and sort by last updated time
+    const chats = Object.values(chatHistory).sort((a, b) => 
+      new Date(b.lastUpdated) - new Date(a.lastUpdated)
+    );
+    
+    return (
+      <div className="bg-white border-b shadow-sm">
+        <div className="flex items-center px-4 overflow-x-auto">
+          {/* New Chat Tab - Always First */}
+          <div 
+            onClick={createNewChat}
+            className="flex items-center px-4 py-2 mx-1 rounded-t-lg cursor-pointer transition-colors bg-blue-600 text-white hover:bg-blue-700"
+          >
+            <MessageSquare className="w-4 h-4 mr-2" />
+            <span className="text-sm font-medium">New Chat</span>
+          </div>
+
+          {/* Divider */}
+          {chats.length > 0 && (
+            <div className="h-6 w-px bg-gray-300 mx-2"></div>
+          )}
+          
+          {/* Chat Tabs */}
+          <div className="flex overflow-x-auto hide-scrollbar">
+            {chats.map(chat => {
+              // Format the date for the tab
+              const date = new Date(chat.lastUpdated);
+              const formattedDate = `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
+              
+              // Generate tab title
+              const tabTitle = chat.documentData?.type 
+                ? `${chat.documentData.type} - ${formattedDate}`
+                : `New Chat - ${formattedDate}`;
+
+              return (
+                <div 
+                  key={chat.id}
+                  className={`flex items-center px-4 py-2 mx-1 rounded-t-lg cursor-pointer transition-colors ${
+                    chat.id === currentChatId 
+                      ? 'bg-gray-100 text-gray-900 border-b-2 border-blue-600' 
+                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                  }`}
+                  onClick={() => loadChat(chat.id)}
+                >
+                  <span className="text-sm font-medium truncate max-w-[200px]">
+                    {tabTitle}
+                  </span>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      confirmDeleteChat(chat.id);
+                    }}
+                    className={`ml-2 p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-gray-200 transition-opacity ${
+                      chat.id === currentChatId ? 'opacity-100' : ''
+                    }`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Add custom scrollbar styles */}
+        <style jsx>{`
+          .hide-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;     /* Firefox */
+          }
+          .hide-scrollbar::-webkit-scrollbar {
+            display: none;             /* Chrome, Safari and Opera */
+          }
+        `}</style>
+      </div>
+    );
+  };
+
+  // Add notification component
+  const renderNotification = () => {
+    if (!showNotification) return null;
+    
+    return (
+      <div className={`fixed top-4 right-4 p-4 rounded-lg shadow-lg z-50 ${
+        notification.type === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'
+      }`}>
+        {notification.message}
+      </div>
+    );
+  };
+  
+  // Add confirmation dialog
+  const renderDeleteConfirmation = () => {
+    if (!showDeleteConfirm) return null;
+    
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+          <h3 className="text-xl font-bold mb-4">Confirm Deletion</h3>
+          <p className="mb-6">Are you sure you want to delete this chat? This action cannot be undone.</p>
+          <div className="flex justify-end gap-3">
+            <button 
+              onClick={cancelDelete}
+              className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
+            >
+              Cancel
+            </button>
+            <button 
+              onClick={handleConfirmedDelete}
+              className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Modify the main component return to handle the case when no chat is selected
   return (
     <div className="h-screen w-screen overflow-hidden bg-gray-100">
       {/* Add Joyride component for guided tour */}
@@ -2103,101 +2904,134 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
         }}
       />
       
-      <div className="h-full relative" ref={containerRef}>
-        <div className="flex h-full">
-          {/* Chat section - Always on left */}
-          <div 
-            className={`${
-              !showBothPanels && arrowDirection === 'left' ? 'w-0' : showBothPanels ? 'w-1/2' : 'w-full'
-            } transition-all duration-300 ease-in-out border-r flex flex-col bg-gray-50 overflow-hidden`}
-          >
-            {renderChatMessages()}
-            <div className="p-4 border-t bg-white">
-              {showDepartmentOptions ? (
-                <div className="space-y-2">
-                  <p className="text-sm text-gray-600">Select a department:</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {DEPARTMENTS.map((dept) => (
-                      <button
-                        key={dept}
-                        onClick={() => handleDepartmentSelect(dept)}
-                        className="p-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-                      >
-                        {dept}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : showYearOptions ? (
-                <div className="space-y-2">
-                  <p className="text-sm text-gray-600">Select a year:</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {YEARS.map((year) => (
-                      <button
-                        key={year}
-                        onClick={() => handleYearSelect(year)}
-                        className="p-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-                      >
-                        {year}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : showDatePicker ? (
-                renderDatePicker()
-              ) : (
-                renderChatInput()
-              )}
+      {/* Add notification and confirmation dialog */}
+      {renderNotification()}
+      {renderDeleteConfirmation()}
+      
+      <div className="h-full relative flex flex-col" ref={containerRef}>
+        {/* Show chat list if open */}
+        {showChatList && renderChatList()}
+        
+        {!currentChatId ? (
+          // Show welcome screen when no chat is selected
+          <div className="h-full flex items-center justify-center bg-gray-50">
+            <div className="text-center max-w-md p-8 bg-white rounded-lg shadow-lg">
+              <FileText className="w-16 h-16 mx-auto mb-4 text-blue-600" />
+              <h2 className="text-2xl font-bold mb-4">Welcome to Document Generator</h2>
+              <p className="mb-6 text-gray-600">
+                Create AI-powered documents with ease. Start by creating a new conversation.
+              </p>
+              <button 
+                onClick={createNewChat}
+                className="px-6 py-3 bg-blue-600 text-white rounded-lg flex items-center gap-2 mx-auto hover:bg-blue-700"
+              >
+                <MessageSquare className="w-5 h-5" />
+                <span>Start New Chat</span>
+              </button>
             </div>
           </div>
-
-          {/* Toggle Button */}
-          <button
-            onClick={handleTogglePanels}
-            className={`absolute top-1/2 -translate-y-1/2 z-10 bg-white shadow-lg rounded-full p-2 hover:bg-gray-50 transition-all duration-300 ${
-              showBothPanels 
-                ? 'left-1/2 -translate-x-1/2' 
-                : arrowDirection === 'right'
-                  ? 'right-0 translate-x-[50%]'
-                  : 'left-0 translate-x-[-50%]'
-            }`}
-          >
-            {showBothPanels ? (
-              arrowDirection === 'right' ? (
-                <ChevronRight className="w-6 h-6 text-gray-600" />
-              ) : (
-                <ChevronLeft className="w-6 h-6 text-gray-600" />
-              )
-            ) : (
-              arrowDirection === 'right' ? (
-                <ChevronLeft className="w-6 h-6 text-gray-600" />
-              ) : (
-                <ChevronRight className="w-6 h-6 text-gray-600" />
-              )
-            )}
-          </button>
-
-          {/* Editor and Preview section - Always on right */}
-          <div 
-            className={`${
-              !showBothPanels && arrowDirection === 'right' ? 'w-0' : showBothPanels ? 'w-1/2' : 'w-full'
-            } transition-all duration-300 ease-in-out flex flex-col bg-gray-100 overflow-hidden`}
-          >
-            {renderDocumentHeader()}
-            <div className="flex-1 overflow-y-auto">
-              {isEditing ? (
-                <div className="p-8">
-                  {renderDocumentContent(editorContent)}
+        ) : (
+          // Regular UI when a chat is selected
+          <>
+            {/* Chat tabs at the top */}
+            {renderChatTabs()}
+            
+            <div className="flex flex-1 overflow-hidden">
+              {/* Chat section - Always on left */}
+              <div 
+                className={`${
+                  !showBothPanels && arrowDirection === 'left' ? 'w-0' : showBothPanels ? 'w-1/2' : 'w-full'
+                } transition-all duration-300 ease-in-out border-r flex flex-col bg-gray-50 overflow-hidden`}
+              >
+                {renderChatMessages()}
+                <div className="p-4 border-t bg-white">
+                  {showDepartmentOptions ? (
+                    <div className="space-y-2">
+                      <p className="text-sm text-gray-600">Select a department:</p>
+                      <select
+                        onChange={(e) => handleDepartmentSelect(e.target.value)}
+                        className="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">Select Department</option>
+                        {DEPARTMENTS.map((dept) => (
+                          <option key={dept} value={dept}>
+                            {dept}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : showYearOptions ? (
+                    <div className="space-y-2">
+                      <p className="text-sm text-gray-600">Select a year:</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {YEARS.map((year) => (
+                          <button
+                            key={year}
+                            onClick={() => handleYearSelect(year)}
+                            className="p-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                          >
+                            {year}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : showDatePicker ? (
+                    renderDatePicker()
+                  ) : (
+                    renderChatInput()
+                  )}
                 </div>
-              ) : (
-                <div className="p-8">
-                  {renderDocumentContent(documentContent[currentPage - 1], true)}
-                  {renderPagination()}
+              </div>
+
+              {/* Toggle Button */}
+              <button
+                onClick={handleTogglePanels}
+                className={`absolute top-1/2 -translate-y-1/2 z-10 bg-white shadow-lg rounded-full p-2 hover:bg-gray-50 transition-all duration-300 ${
+                  showBothPanels 
+                    ? 'left-1/2 -translate-x-1/2' 
+                    : arrowDirection === 'right'
+                      ? 'right-0 translate-x-[50%]'
+                      : 'left-0 translate-x-[-50%]'
+                }`}
+              >
+                {showBothPanels ? (
+                  arrowDirection === 'right' ? (
+                    <ChevronRight className="w-6 h-6 text-gray-600" />
+                  ) : (
+                    <ChevronLeft className="w-6 h-6 text-gray-600" />
+                  )
+                ) : (
+                  arrowDirection === 'right' ? (
+                    <ChevronLeft className="w-6 h-6 text-gray-600" />
+                  ) : (
+                    <ChevronRight className="w-6 h-6 text-gray-600" />
+                  )
+                )}
+              </button>
+
+              {/* Editor and Preview section - Always on right */}
+              <div 
+                className={`${
+                  !showBothPanels && arrowDirection === 'right' ? 'w-0' : showBothPanels ? 'w-1/2' : 'w-full'
+                } transition-all duration-300 ease-in-out flex flex-col bg-gray-100 overflow-hidden`}
+              >
+                {renderDocumentHeader()}
+                <div className="flex-1 overflow-y-auto">
+                  {isEditing ? (
+                    <div className="p-8">
+                      {renderDocumentContent(editorContent)}
+                    </div>
+                  ) : (
+                    <div className="p-8">
+                      {renderDocumentContent(documentContent[currentPage - 1], true)}
+                      {renderPagination()}
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
-          </div>
-        </div>
+          </>
+        )}
       </div>
     </div>
   );
