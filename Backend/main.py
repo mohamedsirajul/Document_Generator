@@ -39,7 +39,7 @@ app.add_middleware(
 )
 
 # Retrieve API key securely
-OPENROUTER_API_KEY = "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"
+OPENROUTER_API_KEY = "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"
 if not OPENROUTER_API_KEY:
     raise ValueError("API Key not found! Set OPENROUTER_API_KEY in environment variables.")
 

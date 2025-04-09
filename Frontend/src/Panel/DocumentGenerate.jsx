@@ -4,13 +4,143 @@ import {
   ListOrdered, Link as LinkIcon, Heading1, Heading2,
   AlignLeft, AlignCenter, AlignRight, Underline,
   Type, Quote, Code, Eye, Edit, Calendar, Upload, X,
-  ChevronLeft, ChevronRight, FileUp
+  ChevronLeft, ChevronRight, FileUp, Save
 } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import jsPDF from "jspdf";
 import "jspdf-autotable";
+import Joyride, { STATUS } from 'react-joyride';
+
+// Add a mapping of CSS-safe names to display names
+const fontNameMap = {
+  'Arial': 'Arial',
+  'TimesNewRoman': 'Times New Roman',
+  'Calibri': 'Calibri',
+  'Georgia': 'Georgia',
+  'Verdana': 'Verdana', 
+  'Roboto': 'Roboto',
+  'OpenSans': 'Open Sans',
+  'Montserrat': 'Montserrat',
+  'Lato': 'Lato',
+  'Mirza': 'Mirza'
+};
+
+// Custom Quill editor component with font whitelist
+const CustomQuillEditor = React.forwardRef((props, ref) => {
+  const editorRef = useRef(null);
+  
+  useEffect(() => {
+    if (editorRef.current) {
+      // Initialize Quill and set up fonts
+      const editor = editorRef.current.getEditor();
+      if (editor) {
+        try {
+          // Access Quill through ReactQuill
+          const Quill = ReactQuill.Quill;
+          
+          // Properly extend the font attributor
+          const FontAttributor = Quill.import('attributors/class/font');
+          FontAttributor.whitelist = Object.keys(fontNameMap);
+          Quill.register(FontAttributor, true);
+          
+          // Create a custom font style tag
+          const styleEl = document.createElement('style');
+          styleEl.setAttribute('data-quill-font-styles', 'true');
+          
+          // Generate CSS for all fonts with proper display in the dropdown
+          let fontStyles = '';
+          
+          // Add styles for dropdown appearance
+          Object.entries(fontNameMap).forEach(([className, fontFamily]) => {
+            // Style for the font in the editor
+            fontStyles += `.ql-font-${className} { font-family: '${fontFamily}', sans-serif; }\n`;
+            
+            // Style for the font in the dropdown
+            fontStyles += `.ql-picker.ql-font .ql-picker-item[data-value="${className}"] { font-family: '${fontFamily}', sans-serif; }\n`;
+          });
+          
+          // Add styles for the currently selected font in the toolbar
+          fontStyles += `.ql-picker.ql-font .ql-picker-label[data-value="Arial"]::before { content: 'Arial'; }\n`;
+          
+          Object.entries(fontNameMap).forEach(([className, fontFamily]) => {
+            fontStyles += `.ql-picker.ql-font .ql-picker-label[data-value="${className}"]::before { content: '${fontFamily}'; font-family: '${fontFamily}', sans-serif; }\n`;
+            fontStyles += `.ql-picker.ql-font .ql-picker-item[data-value="${className}"]::before { content: '${fontFamily}'; font-family: '${fontFamily}', sans-serif; }\n`;
+          });
+          
+          styleEl.innerHTML = fontStyles;
+          document.head.appendChild(styleEl);
+          
+          // Log success if fonts are registered
+          console.log('Custom fonts registered:', FontAttributor.whitelist);
+        } catch (err) {
+          console.error('Error registering fonts:', err);
+        }
+      }
+    }
+    
+    // Cleanup function
+    return () => {
+      // Remove style element if it exists
+      const styleEl = document.querySelector('style[data-quill-font-styles]');
+      if (styleEl) {
+        document.head.removeChild(styleEl);
+      }
+    };
+  }, []);
+  
+  // Forward the ref to parent component with extended methods
+  React.useImperativeHandle(ref, () => ({
+    getEditor: () => editorRef.current ? editorRef.current.getEditor() : null,
+    focus: () => {
+      if (editorRef.current) {
+        const editor = editorRef.current.getEditor();
+        if (editor) {
+          editor.focus();
+          // Don't set the cursor at the end when focusing
+        }
+      }
+    }
+  }));
+  
+  // Create a custom toolbar
+  const modules = {
+    toolbar: {
+      container: [
+        [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
+        [{ 'font': Object.keys(fontNameMap) }],
+        // [{ 'size': ['small', false, 'large', 'huge'] }],
+        ['bold', 'italic', 'underline', 'strike'],
+        [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+        [{ 'align': [] }],
+        ['link', 'image'],
+        ['clean']
+      ]
+    },
+    clipboard: {
+      matchVisual: false,
+    }
+  };
+  
+  return (
+    <ReactQuill
+      ref={editorRef}
+      theme="snow"
+      {...props}
+      modules={modules}
+      formats={[
+        'header',
+        'font',
+        'size',
+        'bold', 'italic', 'underline', 'strike',
+        'list', 'bullet',
+        'align',
+        'link', 'image'
+      ]}
+    />
+  );
+});
 
 // Editor Toolbar Component
 const EditorToolbar = ({ onFormatClick, selectedFormat, onFormatChange }) => {
@@ -19,7 +149,11 @@ const EditorToolbar = ({ onFormatClick, selectedFormat, onFormatChange }) => {
     { label: 'Times New Roman', value: 'Times New Roman' },
     { label: 'Calibri', value: 'Calibri' },
     { label: 'Georgia', value: 'Georgia' },
-    { label: 'Verdana', value: 'Verdana' }
+    { label: 'Verdana', value: 'Verdana' },
+    { label: 'Roboto', value: 'Roboto' },
+    { label: 'Open Sans', value: 'Open Sans' },
+    { label: 'Montserrat', value: 'Montserrat' },
+    { label: 'Lato', value: 'Lato' }
   ];
 
   const fontSizes = [
@@ -138,7 +272,7 @@ const DocumentGenerate = () => {
   const [showBothPanels, setShowBothPanels] = useState(true);
   const [arrowDirection, setArrowDirection] = useState('right');
   const containerRef = useRef(null);
-
+  
   // Define required fields for Guest Lecture
   const requiredFields = [
     "Guest Name",
@@ -172,7 +306,13 @@ const DocumentGenerate = () => {
   const [undoStack, setUndoStack] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
 
-  // Quill editor modules configuration
+  // Add new state for Joyride tour
+  const [runTour, setRunTour] = useState(false);
+  const [tourSteps, setTourSteps] = useState([]);
+  const [isImageButtonClicked, setIsImageButtonClicked] = useState(false);
+  const [needsImageUpload, setNeedsImageUpload] = useState(false);
+
+  // Simplified Quill modules configuration
   const modules = {
     toolbar: [
       [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
@@ -204,11 +344,13 @@ const DocumentGenerate = () => {
     const text = editorRef.current?.getEditor().getText() || '';
     setWordCount(text.trim().split(/\s+/).length);
 
-    // Save state for undo/redo
+    // Save state for undo/redo without changing cursor position
     if (editorRef.current) {
       const currentContent = editorRef.current.getEditor().root.innerHTML;
       setUndoStack(prev => [...prev, currentContent]);
       setRedoStack([]);
+      
+      // Don't modify selection here to keep cursor in place
     }
   };
 
@@ -381,18 +523,11 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
         { field: "Guest Designation", question: "Please enter the guest's designation:", type: "text" },
         { field: "Topic", question: "Please enter the topic of the lecture:", type: "text" },
         { field: "Event Date", question: "Please select the event date:", type: "date" },
-        { field: "Activity Code", question: "Please enter the activity code :", type: "text" },
+        { field: "Activity Code", question: "Please enter the activity code:", type: "text" },
         { field: "Year", question: "Please select the target year:", type: "year" },
         { field: "No Of Count", question: "Please enter the expected number of participants:", type: "text" },
         { field: "Organizer Department", question: "Please select the organizing department:", type: "department" },
-        { field: "Organizer Faculty Name", question: "Please enter the faculty coordinator's name:", type: "text" },
-        { 
-          field: "Images",
-          question: "Please upload images related to the document:",
-          type: "image",
-          multiple: true,
-          accept: "image/*"
-        }
+        { field: "Organizer Faculty Name", question: "Please enter the faculty coordinator's name:", type: "text" }
       ];
 
       // Find current field index
@@ -445,11 +580,8 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
             }]);
         }
       } else {
-        // All fields are collected, show empty document panel
-        setEditorContent('');
-        setDocumentContent([]);
-        setTotalPages(1);
-        setCurrentPage(1);
+        // All required fields are collected, generate content automatically
+        handleGenerateContent();
       }
     }
   };
@@ -765,6 +897,43 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       );
     }
 
+    if (message.buttons) {
+      return (
+        <div key={message.id} className="mb-4 text-left">
+          <div className="flex gap-2">
+            {message.buttons.map((button, index) => (
+              <button
+                key={index}
+                onClick={() => handleChatButtonClick(button.action)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                {button.text}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    if (message.fontButtons) {
+      return (
+        <div key={message.id} className="mb-4 text-left">
+          <div className="flex flex-wrap gap-2">
+            {message.fonts.map((font, index) => (
+              <button
+                key={index}
+                onClick={() => handleFontSelect(font.value)}
+                className="px-4 py-2 border border-gray-300 bg-white rounded-lg hover:bg-gray-100 transition-colors"
+                style={{ fontFamily: font.value }}
+              >
+                {font.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div
         key={message.id}
@@ -843,46 +1012,6 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       );
     }
 
-    if (documentData.currentField === "Images") {
-      return (
-        <div className="space-y-2">
-          <p className="text-sm text-gray-600">Upload images:</p>
-          <div className="flex gap-2">
-            <label className={`flex-1 flex items-center gap-2 p-2 bg-gray-100 hover:bg-gray-200 rounded-lg cursor-pointer transition-colors ${isImageUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
-              <Upload className="w-5 h-5 text-gray-600" />
-              <span className="text-gray-600">Choose Images</span>
-              <input
-                type="file"
-                multiple
-                accept="image/*"
-                onChange={handleImageUpload}
-                className="hidden"
-                disabled={isImageUploading}
-              />
-            </label>
-            {uploadedImages.length > 0 && (
-              <button
-                onClick={handleImageSubmit}
-                className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={isImageUploading}
-              >
-                <Send className="w-5 h-5" />
-                <span>Send</span>
-              </button>
-            )}
-          </div>
-          {previewImages.length > 0 && (
-            <div>
-              <ImagePreview images={previewImages} onRemove={removeImage} />
-              <p className="text-sm text-gray-500 mt-2">
-                {uploadedImages.length} image(s) selected
-              </p>
-            </div>
-          )}
-        </div>
-      );
-    }
-
     // Regular chat input for other fields
     return (
       <form onSubmit={handleSendMessage} className="flex gap-2">
@@ -948,6 +1077,38 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
   const handleGenerateContent = async () => {
     setIsLoading(true);
     try {
+      // Add loading message to chat
+      const loadingMessageId = Date.now();
+      setMessages(prev => [...prev, {
+        id: loadingMessageId,
+        text: 'Generating document content...',
+        isBot: true,
+        isLoading: true
+      }]);
+
+      // Check if all required fields are filled
+      const requiredFields = [
+        "Guest Name",
+        "Guest Designation",
+        "Topic",
+        "Event Date",
+        "Activity Code",
+        "Year",
+        "No Of Count",
+        "Organizer Department",
+        "Organizer Faculty Name"
+      ];
+      
+      // Create a copy of fields to ensure we have all required fields
+      const fieldsToSend = { ...documentData.fields };
+      
+      // Set default value for any missing fields
+      requiredFields.forEach(field => {
+        if (!fieldsToSend[field]) {
+          fieldsToSend[field] = "Not specified";
+        }
+      });
+
       const response = await fetch('http://localhost:8000/api/generate-content', {
         method: 'POST',
         headers: {
@@ -955,13 +1116,15 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
         },
         body: JSON.stringify({
           type: documentData.type,
-          fields: documentData.fields
+          fields: fieldsToSend
         }),
       });
 
       const data = await response.json();
 
       if (data.error) {
+        // Remove loading message and show error
+        setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
         setMessages(prev => [...prev, {
           id: Date.now(),
           text: `Error: ${data.error}`,
@@ -976,22 +1139,78 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       setDocumentContent(pages);
       setTotalPages(pages.length);
 
-      // Update editor content
+      // Update editor content without changing cursor position
       setEditorContent(content);
+      
+      // Remove position cursor code to allow natural cursor position
 
-      // Update messages
+      // Remove loading message
+      setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
+      
+      // First show a success message
       setMessages(prev => [...prev, {
         id: Date.now(),
         text: "Document has been generated successfully!",
         isBot: true
+      }]);
+      
+      // Display sections if available
+      if (data.sections) {
+        // Add a message indicating that sections follow
+        setMessages(prev => [...prev, {
+          id: Date.now() + 1,
+          text: "Here are the document sections:",
+          isBot: true
+        }]);
+        
+        // Add each section as a separate message
+        Object.entries(data.sections).forEach(([section, content], index) => {
+          setMessages(prev => [...prev, {
+            id: Date.now() + index + 2,
+            text: `**${section}**\n\n${content}`,
+            isBot: true,
+            isContent: true
+          }]);
+        });
+      }
+      
+      // Then ask about images
+      setMessages(prev => [...prev, {
+        id: Date.now() + 100,
+        text: "Would you like to add event images to your document?",
+        isBot: true
+      }]);
+
+      // Add buttons for Yes/No
+      setMessages(prev => [...prev, {
+        id: Date.now() + 101,
+        text: "",
+        isBot: true,
+        buttons: [
+          {
+            text: "Yes, add images",
+            action: "addImages"
+          },
+          {
+            text: "No, continue without images",
+            action: "skipImages"
+          }
+        ]
       }]);
 
       // Store the complete response for preview
       setPreviewContent(data);
       setWordCount(data.word_count);
 
+      // Reset currentField to indicate all required fields are collected
+      setDocumentData(prev => ({
+        ...prev,
+        currentField: null
+      }));
+
     } catch (error) {
       console.error('Error:', error);
+      setMessages(prev => prev.filter(msg => msg.isLoading));
       setMessages(prev => [...prev, {
         id: Date.now(),
         text: 'An error occurred while generating the content. Please try again.',
@@ -1165,12 +1384,12 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     }
   };
 
-  // Update renderDocumentContent to use improved styling
+  // Update renderDocumentContent to use CustomQuillEditor
   const renderDocumentContent = (content, isPreview = false) => {
     const containerClass = isPreview ? 'preview-container' : 'edit-container';
     
     const documentHeader = `
-      <div class="document-header mb-8">
+      <div class="document-header mb-8" style="font-family: system-ui, -apple-system, sans-serif;">
         <!-- Logo -->
         <div class="flex justify-center mb-4 pb-4">
           <img src="${logoUrl}" alt="Fxec Logo" class="w-full h-16 object-contain" />
@@ -1228,24 +1447,19 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       </div>
     `;
 
-    // Update editor content styles for images section with improved styling
+    // Update editor content styles with improved image handling
     const customStyles = `
       <style>
-        body {
-          font-family: ${selectedFormat.fontFamily};
+        .ql-editor {
+          font-family: ${selectedFormat.fontFamily}, sans-serif;
           font-size: ${selectedFormat.fontSize};
           line-height: 1.6;
-        }
-        .ql-editor {
-          font-family: ${selectedFormat.fontFamily} !important;
-          font-size: ${selectedFormat.fontSize} !important;
-          line-height: 1.6 !important;
         }
         .event-images h2 {
           font-size: 1.5rem;
           font-weight: bold;
           margin-bottom: 1.5rem;
-          font-family: ${selectedFormat.fontFamily};
+          font-family: ${selectedFormat.fontFamily}, sans-serif;
           color: #2563eb;
           background-color: #f3f4f6;
           padding: 8px;
@@ -1258,7 +1472,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
           font-size: 0.875rem;
           color: #4b5563;
           margin-bottom: 0.5rem;
-          font-family: ${selectedFormat.fontFamily};
+          font-family: ${selectedFormat.fontFamily}, sans-serif;
           background-color: #3b82f6;
           color: white;
           display: inline-block;
@@ -1271,6 +1485,15 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
           margin-bottom: 1rem;
           border-radius: 0.375rem;
         }
+        
+        /* Better image handling for preview mode */
+        .document-content img {
+          max-width: 100%;
+          height: auto;
+          border-radius: 8px;
+          margin: 1rem 0;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
       </style>
     `;
 
@@ -1282,10 +1505,10 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
         }} />
         
         {/* Content Section with improved styling */}
-        <div className="mt-8">
+        <div className="mt-8 document-content-area">
           {isPreview ? (
             <div 
-              className="min-h-[500px] prose max-w-none"
+              className="min-h-[500px] prose max-w-none document-content"
               style={{
                 fontFamily: selectedFormat.fontFamily,
                 fontSize: selectedFormat.fontSize,
@@ -1296,19 +1519,16 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
               }} 
             />
           ) : (
-            <ReactQuill
+            <CustomQuillEditor
               ref={editorRef}
-              theme="snow"
               value={content}
               onChange={handleEditorChange}
-              modules={modules}
-              formats={formats}
               style={{ 
                 height: '500px',
                 fontFamily: selectedFormat.fontFamily,
                 fontSize: selectedFormat.fontSize
               }}
-              className="h-[500px] mb-12 border-0"
+              className="h-[500px] mb-12 border-0 document-editor"
             />
           )}
         </div>
@@ -1420,6 +1640,15 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
           <span className="font-medium">Document Editor</span>
         </div>
         <div className="flex space-x-2">
+          {isEditing && (
+            <button
+              onClick={handleSaveDocument}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
+            >
+              <Save className="w-4 h-4" />
+              <span>Save Changes</span>
+            </button>
+          )}
           <button
             onClick={() => setShowPdfUpload(true)}
             className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2"
@@ -1455,8 +1684,425 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     );
   };
 
+  // Add new function to highlight the image button in the editor toolbar
+  const highlightImageButton = () => {
+    // Get the image button in the Quill toolbar
+    const imageButton = document.querySelector('.ql-image');
+    if (imageButton) {
+      // Add blinking animation to highlight the button
+      imageButton.classList.add('highlight-button');
+      imageButton.style.animation = 'pulse 1.5s infinite';
+      imageButton.style.backgroundColor = '#e9f5ff';
+      imageButton.style.borderRadius = '4px';
+      imageButton.style.boxShadow = '0 0 8px #3b82f6';
+      
+      // Add tooltip
+      imageButton.title = 'Click here to add event images';
+      
+      // Remove highlight after a while
+      setTimeout(() => {
+        imageButton.style.animation = '';
+        imageButton.style.backgroundColor = '';
+        imageButton.style.boxShadow = '';
+        imageButton.classList.remove('highlight-button');
+      }, 10000);
+    }
+  };
+
+  // Update the handleChatButtonClick function to correctly focus the editor
+  const handleChatButtonClick = (action) => {
+    if (action === 'addImages') {
+      // Set flag that user needs to add images
+      setNeedsImageUpload(true);
+      
+      // Start the Joyride tour to guide user to image button
+      startImageUploadTour();
+      
+      setMessages(prev => [...prev, {
+        id: Date.now(),
+        text: "Click on the highlighted image button in the editor toolbar to add your event images.",
+        isBot: true
+      }]);
+      
+      // Switch to edit mode if not already there
+      if (!isEditing) {
+        setIsEditing(true);
+      }
+      
+      // Focus on editor - only try to focus if the editor exists
+      if (editorRef.current) {
+        try {
+          // Use the proper focus method from our forwarded ref
+          editorRef.current.focus();
+        } catch (err) {
+          console.warn('Could not focus editor:', err);
+          // As a fallback, try to focus the editor container
+          const editorElement = document.querySelector('.ql-editor');
+          if (editorElement) {
+            editorElement.focus();
+          }
+        }
+      }
+    } else if (action === 'skipImages') {
+      setNeedsImageUpload(false);
+      setMessages(prev => [...prev, {
+        id: Date.now(),
+        text: "No problem! Your document has been created without event images. You can continue editing the document.",
+        isBot: true
+      }]);
+    }
+  };
+
+  // Add function to start the image upload tour
+  const startImageUploadTour = () => {
+    // Define the tour steps
+    const steps = [
+      {
+        target: '.ql-image',
+        content: 'Click this button to add event images to your document',
+        disableBeacon: true,
+        spotlightClicks: true,
+        placement: 'bottom',
+        styles: {
+          options: {
+            zIndex: 10000,
+          }
+        }
+      }
+    ];
+    
+    setTourSteps(steps);
+    setRunTour(true);
+  };
+  
+  // Handle tour callback
+  const handleJoyrideCallback = (data) => {
+    const { status, action, index } = data;
+    
+    // If tour is finished or skipped
+    if ([STATUS.FINISHED, STATUS.SKIPPED].includes(status)) {
+      setRunTour(false);
+    }
+    
+    // If image button was clicked during tour
+    if (action === 'click' && index === 0) {
+      setIsImageButtonClicked(true);
+      setRunTour(false);
+    }
+  };
+  
+  // Add event listener to Quill editor to detect image button click
+  useEffect(() => {
+    if (editorRef.current && needsImageUpload) {
+      const imageButton = document.querySelector('.ql-image');
+      if (imageButton) {
+        const handleImageClick = () => {
+          setIsImageButtonClicked(true);
+          setNeedsImageUpload(false);
+          
+          // Add confirmation message in chat
+          setMessages(prev => [...prev, {
+            id: Date.now(),
+            text: "Great! Your images will be added to the document.",
+            isBot: true
+          }]);
+          
+          // After image is added, display font style options
+          setTimeout(() => {
+            // Add message about font options
+            setMessages(prev => [...prev, {
+              id: Date.now() + 1,
+              text: "Would you like to change the font style of your document?",
+              isBot: true
+            }]);
+            
+            // Add font style buttons with display names
+            setMessages(prev => [...prev, {
+              id: Date.now() + 2,
+              text: "",
+              isBot: true,
+              fontButtons: true,
+              fonts: Object.entries(fontNameMap).map(([key, value]) => ({
+                label: value,
+                value: value
+              }))
+            }]);
+          }, 1000); // Show font options after a short delay
+
+          // Remove the event listener
+          imageButton.removeEventListener('click', handleImageClick);
+        };
+        
+        imageButton.addEventListener('click', handleImageClick);
+        
+        // Clean up the event listener
+        return () => {
+          imageButton.removeEventListener('click', handleImageClick);
+        };
+      }
+    }
+  }, [editorRef.current, needsImageUpload]);
+  
+  // Prevent user from clicking other buttons while image upload is required
+  useEffect(() => {
+    if (needsImageUpload && !isImageButtonClicked) {
+      // Disable all toolbar buttons except image
+      const toolbarButtons = document.querySelectorAll('.ql-toolbar button:not(.ql-image)');
+      toolbarButtons.forEach(button => {
+        button.disabled = true;
+        button.style.opacity = '0.5';
+        button.style.cursor = 'not-allowed';
+      });
+      
+      return () => {
+        // Re-enable all toolbar buttons
+        toolbarButtons.forEach(button => {
+          button.disabled = false;
+          button.style.opacity = '1';
+          button.style.cursor = 'pointer';
+        });
+      };
+    }
+  }, [needsImageUpload, isImageButtonClicked]);
+  
+  // Add a pulse style to draw attention to the image button
+  useEffect(() => {
+    if (needsImageUpload && !isImageButtonClicked) {
+      const imageButton = document.querySelector('.ql-image');
+      if (imageButton) {
+        imageButton.style.animation = 'pulse 1.5s infinite';
+        imageButton.style.backgroundColor = '#e9f5ff';
+        imageButton.style.borderRadius = '4px';
+        imageButton.style.boxShadow = '0 0 8px #3b82f6';
+        imageButton.style.transform = 'scale(1.2)';
+        imageButton.style.zIndex = '100';
+        
+        // Add overlay to prevent clicking on other parts
+        const overlay = document.createElement('div');
+        overlay.style.position = 'fixed';
+        overlay.style.top = '0';
+        overlay.style.left = '0';
+        overlay.style.right = '0';
+        overlay.style.bottom = '0';
+        overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+        overlay.style.zIndex = '99';
+        overlay.style.pointerEvents = 'none';
+        document.body.appendChild(overlay);
+        
+        // Create hole in overlay for image button
+        const rect = imageButton.getBoundingClientRect();
+        overlay.innerHTML = `
+          <div style="
+            position: absolute;
+            top: ${rect.top - 10}px;
+            left: ${rect.left - 10}px;
+            width: ${rect.width + 20}px;
+            height: ${rect.height + 20}px;
+            background-color: transparent;
+            border-radius: 8px;
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+            pointer-events: none;
+          "></div>
+        `;
+        
+        return () => {
+          imageButton.style.animation = '';
+          imageButton.style.backgroundColor = '';
+          imageButton.style.boxShadow = '';
+          imageButton.style.transform = '';
+          imageButton.style.zIndex = '';
+          document.body.removeChild(overlay);
+        };
+      }
+    }
+  }, [needsImageUpload, isImageButtonClicked]);
+
+  // Add CSS for the pulsing animation
+  useEffect(() => {
+    // Add style to document head
+    const style = document.createElement('style');
+    style.innerHTML = `
+      @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(59, 130, 246, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+      }
+    `;
+    document.head.appendChild(style);
+    
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
+
+  // Add Google Fonts - update to include all fonts in their proper formats
+  useEffect(() => {
+    // Add Google Fonts link including all web fonts
+    const googleFontsLink = document.createElement('link');
+    googleFontsLink.rel = 'stylesheet';
+    googleFontsLink.href = 'https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Open+Sans:wght@400;700&family=Montserrat:wght@400;700&family=Lato:wght@400;700&family=Mirza:wght@400;700&family=Calibri:wght@400;700&display=swap';
+    document.head.appendChild(googleFontsLink);
+    
+    return () => {
+      document.head.removeChild(googleFontsLink);
+    };
+  }, []);
+
+  // Update handleFontSelect to maintain cursor position
+  const handleFontSelect = (fontFamily) => {
+    // Convert display name to CSS-safe name if needed
+    const cssSafeFontName = Object.entries(fontNameMap).find(
+      ([key, value]) => value === fontFamily
+    )?.[0] || fontFamily;
+    
+    // Update the document font
+    setSelectedFormat(prev => ({
+      ...prev,
+      fontFamily
+    }));
+    
+    // Apply the font using CSS and Quill format - only to the editor content
+    if (editorRef.current) {
+      try {
+        const editor = editorRef.current.getEditor();
+        
+        // Save current selection before formatting
+        const currentSelection = editor.getSelection();
+        
+        // Get the current content and length
+        const length = editor.getLength();
+        
+        // Target only the editor content by formatting just the text content
+        // Format only the content area, not headers or other parts
+        editor.formatText(0, length, 'font', cssSafeFontName);
+        
+        // Also update the CSS to ensure the font is applied correctly
+        const editorElement = editor.root;
+        editorElement.style.fontFamily = `${fontFamily}, sans-serif`;
+        
+        // Restore selection if it existed
+        if (currentSelection) {
+          editor.setSelection(currentSelection);
+        }
+        
+        // Add confirmation message
+        setMessages(prev => [...prev, {
+          id: Date.now(),
+          text: `Font changed to ${fontFamily} for document content.`,
+          isBot: true
+        }]);
+      } catch (err) {
+        console.error('Error applying font:', err);
+        
+        // Fallback to CSS styling if Quill API fails
+        try {
+          const editorElement = document.querySelector('.ql-editor');
+          if (editorElement) {
+            editorElement.style.fontFamily = `${fontFamily}, sans-serif`;
+            
+            // Add confirmation message even with fallback method
+            setMessages(prev => [...prev, {
+              id: Date.now(),
+              text: `Font changed to ${fontFamily} for document content (using fallback method).`,
+              isBot: true
+            }]);
+          }
+        } catch (cssErr) {
+          console.error('Fallback font styling also failed:', cssErr);
+        }
+      }
+    }
+  };
+
+  // Add function to handle saving document changes
+  const handleSaveDocument = () => {
+    if (!editorRef.current) return;
+    
+    // Get current editor content
+    const editor = editorRef.current.getEditor();
+    const htmlContent = editor.root.innerHTML;
+    
+    // Update document content state
+    setEditorContent(htmlContent);
+    
+    // Save images properly by processing them to be visible in preview mode
+    const images = Array.from(editor.root.querySelectorAll('img'));
+    
+    // Create a properly formatted page for preview
+    const formattedContent = processContentForPreview(htmlContent, images);
+    setDocumentContent([formattedContent]);
+    
+    // Show success message
+    setMessages(prev => [...prev, {
+      id: Date.now(),
+      text: "Document changes saved successfully!",
+      isBot: true
+    }]);
+  };
+
+  // Add function to process content for preview to ensure images display correctly
+  const processContentForPreview = (htmlContent, images) => {
+    let processedContent = htmlContent;
+    
+    // Ensure images have proper styles and max-width for preview
+    images.forEach((img, index) => {
+      const imgSrc = img.getAttribute('src');
+      if (imgSrc) {
+        // Give each image a unique ID to track it
+        const imgId = `doc-img-${index}-${Date.now()}`;
+        img.setAttribute('id', imgId);
+        
+        // Add styles for better presentation in preview
+        img.style.maxWidth = '100%';
+        img.style.height = 'auto';
+        img.style.borderRadius = '8px';
+        img.style.margin = '1rem 0';
+        img.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)';
+      }
+    });
+    
+    return processedContent;
+  };
+
+  // Add a function to automatically save when switching to preview mode
+  useEffect(() => {
+    // When changing from edit mode to preview mode
+    if (!isEditing && editorRef.current) {
+      handleSaveDocument();
+    }
+  }, [isEditing]);
+
   return (
     <div className="h-screen w-screen overflow-hidden bg-gray-100">
+      {/* Add Joyride component for guided tour */}
+      <Joyride
+        callback={handleJoyrideCallback}
+        continuous={false}
+        run={runTour}
+        scrollToFirstStep={true}
+        showProgress={false}
+        showSkipButton={false}
+        steps={tourSteps}
+        styles={{
+          options: {
+            zIndex: 10000,
+            primaryColor: '#3b82f6',
+          },
+          spotlight: {
+            backgroundColor: 'transparent',
+          },
+          tooltipContainer: {
+            textAlign: 'center',
+          },
+          buttonNext: {
+            backgroundColor: '#3b82f6',
+          },
+          buttonBack: {
+            color: '#3b82f6',
+          }
+        }}
+      />
+      
       <div className="h-full relative" ref={containerRef}>
         <div className="flex h-full">
           {/* Chat section - Always on left */}
