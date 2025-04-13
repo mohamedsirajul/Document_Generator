@@ -4,7 +4,8 @@ import {
   ListOrdered, Link as LinkIcon, Heading1, Heading2,
   AlignLeft, AlignCenter, AlignRight, Underline,
   Type, Quote, Code, Eye, Edit, Calendar, Upload, X,
-  ChevronLeft, ChevronRight, FileUp, Save, MessageSquare, List as ListIcon
+  ChevronLeft, ChevronRight, FileUp, Save, MessageSquare, List as ListIcon,
+  Upload as UploadIcon, Save as SaveIcon, Eye as EyeIcon, Download as DownloadIcon
 } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import ReactQuill from 'react-quill';
@@ -241,6 +242,7 @@ const DocumentGenerate = () => {
   const [inputMessage, setInputMessage] = useState('');
   const [isEditing, setIsEditing] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [posterProcessing, setPosterProcessing] = useState(false);
   const editorRef = useRef(null);
   const [editorContent, setEditorContent] = useState('');
   const [selectedFormat, setSelectedFormat] = useState({
@@ -428,161 +430,22 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 
   // Update handleDocumentFlow function
   const handleDocumentFlow = async (userMessage) => {
-    if (!documentData.type) {
-      const messageLower = userMessage.toLowerCase().trim();
+    if (userMessage.toLowerCase() === 'guest lecture') {
+      // Start the guest lecture input flow
+      setDocumentData({
+        type: 'GuestLecture',
+        currentField: 'Guest Name',
+        awaitingInput: true,
+        fields: {}
+      });
       
-      // Check for all document types
-      const documentTypes = {
-        "1": "Minutes",
-        "minutes of department meeting": "Minutes",
-        "2": "MasterList",
-        "master list of documents": "MasterList",
-        "3": "SubjectAllocation",
-        "subject allocation": "SubjectAllocation",
-        "4": "StaffRequirement",
-        "requirement of staff members": "StaffRequirement",
-        "5": "LabManual",
-        "lab manual": "LabManual",
-        "6": "Experiments",
-        "list of experiments": "Experiments",
-        "7": "Workload",
-        "workload allocation": "Workload",
-        "8": "IndividualTT",
-        "individual time table": "IndividualTT",
-        "9": "MasterTT",
-        "master time table": "MasterTT",
-        "10": "CoachingTT",
-        "coaching class time table": "CoachingTT",
-        "11": "GuestLecture",
-        "guest lecture": "GuestLecture"
-      };
-
-      const selectedType = documentTypes[messageLower];
-      if (selectedType) {
-        if (selectedType === "GuestLecture") {
-          setDocumentData(prev => ({
-            ...prev,
-            type: selectedType,
-            currentField: "Guest Name",
-            fields: {}
-          }));
-
-          setMessages(prev => [...prev, {
-            id: prev.length + 1,
-            text: "Please enter the name of the guest lecturer:",
-            isBot: true
-          }]);
-        } else {
-          // For all other document types
-          setMessages(prev => [...prev, {
-            id: prev.length + 1,
-            text: `This document type (${selectedType.replace(/([A-Z])/g, ' $1').trim()}) is currently in development. It will be available soon!\n\nPlease select another document type from the list:\n\n1. Minutes of Department Meeting\n2. Master list of documents\n3. Subject Allocation\n4. Requirement of Staff Members\n5. Lab Manual\n6. List of Experiments\n7. Workload Allocation\n8. Individual Time Table\n9. Master Time Table\n10. Coaching Class Time Table\n11. Guest Lecture`,
-            isBot: true
-          }]);
-
-          // Reset document data
-          setDocumentData({
-            type: null,
-            currentField: null,
-            fields: {}
-          });
-        }
-      } else {
-        setMessages(prev => [...prev, {
-          id: prev.length + 1,
-          text: "I didn't understand that. Please select a number from 1-11 or type the document name.",
-          isBot: true
-        }]);
-      }
-    } else if (documentData.type === "GuestLecture") {
-      // Store the current field's value
-      const updatedFields = {
-        ...documentData.fields,
-        [documentData.currentField]: userMessage
-      };
-
-      setDocumentData(prev => ({
-        ...prev,
-        fields: updatedFields
-      }));
-
-      // Store document data with discussion ID
-      setDocumentStorage(prev => ({
-        ...prev,
-        [discussionId]: {
-          ...prev[discussionId],
-          type: documentData.type,
-          fields: updatedFields,
-          lastUpdated: new Date().toISOString()
-        }
-      }));
-
-      // Define the field sequence and their corresponding questions
-      const fieldSequence = [
-        { field: "Guest Name", question: "Please enter the guest's name:", type: "text" },
-        { field: "Guest Designation", question: "Please enter the guest's designation:", type: "text" },
-        { field: "Topic", question: "Please enter the topic of the lecture:", type: "text" },
-        { field: "Event Date", question: "Please select the event date:", type: "date" },
-        { field: "Activity Code", question: "Please enter the activity code:", type: "text" },
-        { field: "Year", question: "Please select the target year:", type: "year" },
-        { field: "No Of Count", question: "Please enter the expected number of participants:", type: "text" },
-        { field: "Organizer Department", question: "Please select the organizing department:", type: "department" },
-        { field: "Organizer Faculty Name", question: "Please enter the faculty coordinator's name:", type: "text" }
-      ];
-
-      // Find current field index
-      const currentIndex = fieldSequence.findIndex(item => item.field === documentData.currentField);
-
-      // Move to next field
-      if (currentIndex < fieldSequence.length - 1) {
-        const nextField = fieldSequence[currentIndex + 1];
-        setDocumentData(prev => ({
-          ...prev,
-          currentField: nextField.field
-        }));
-
-        // Reset all special input states
-        setShowDatePicker(false);
-        setShowYearOptions(false);
-        setShowDepartmentOptions(false);
-
-        // Special handling for different fields
-        switch (nextField.type) {
-          case "department":
-            setShowDepartmentOptions(true);
-            setMessages(prev => [...prev, {
-              id: prev.length + 1,
-              text: nextField.question,
-              isBot: true
-            }]);
-            break;
-          case "year":
-            setShowYearOptions(true);
-            setMessages(prev => [...prev, {
-              id: prev.length + 1,
-              text: nextField.question,
-              isBot: true
-            }]);
-            break;
-          case "date":
-            setShowDatePicker(true);
-            setMessages(prev => [...prev, {
-              id: prev.length + 1,
-              text: nextField.question,
-              isBot: true
-            }]);
-            break;
-          default:
-            setMessages(prev => [...prev, {
-              id: prev.length + 1,
-              text: nextField.question,
-              isBot: true
-            }]);
-        }
-      } else {
-        // All required fields are collected, generate content automatically
-        handleGenerateContent();
-      }
+      setTimeout(() => {
+        addMessageToChat({
+          type: 'bot',
+          content: "Please enter the name of the guest lecturer:",
+          timestamp: new Date().toISOString()
+        });
+      }, 500);
     }
   };
 
@@ -594,13 +457,10 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     try {
       // Generate unique IDs for each image with more readable names
       const newPreviewImages = files.map(file => {
-        // Extract just the filename
-        const fileName = file.name;
-        
         return {
           id: `IMG_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           url: URL.createObjectURL(file),
-          name: fileName,
+          name: file.name,
           type: file.type,
           size: file.size
         };
@@ -639,11 +499,20 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       // Save to localStorage
       saveDocument(updatedData);
 
-      // Add message to chat without loading state
+      // Add success message to chat
       setMessages(prev => [...prev, {
         id: Date.now(),
-        text: 'Upload image and click send to generate content.',
+        text: `Successfully uploaded ${files.length} image(s). The images have been added to your document.`,
         isBot: true
+      }]);
+
+      // Add image preview to chat
+      setMessages(prev => [...prev, {
+        id: Date.now() + 1,
+        text: "",
+        images: newPreviewImages,
+        isBot: false,
+        isUserUpload: true
       }]);
 
     } catch (error) {
@@ -947,6 +816,26 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       );
     }
 
+    if (message.isLoader) {
+      return (
+        <div className="flex items-start space-x-2 mb-4">
+          <div className="flex-shrink-0">
+            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+              <svg className="w-5 h-5 text-blue-500 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            </div>
+          </div>
+          <div className="flex-1">
+            <div className="bg-gray-100 rounded-lg p-3">
+              <p className="text-gray-700">{message.content}</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div
         key={message.id}
@@ -1020,9 +909,14 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
   const renderChatInput = () => {
     if (isLoading || isImageUploading || isPdfUploading) {
       return (
-        <div className="flex items-center justify-center p-4">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-        </div>
+      <div className="p-4 border-t bg-white space-y-2">
+        {(posterProcessing || isLoading || isImageUploading || isPdfUploading) && (
+          <div className="flex items-center justify-center gap-3 text-gray-600 mb-3">
+            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+            <span className="text-sm font-medium">Processing poster...</span>
+          </div>
+        )}
+      </div>
       );
     }
 
@@ -1064,13 +958,13 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
             value={inputMessage}
             onChange={(e) => setInputMessage(e.target.value)}
             placeholder="Type your message..."
-            className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            disabled={isLoading}
+            className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+            disabled={isLoading || posterProcessing || isImageUploading || isPdfUploading}
           />
           <button
             type="submit"
             className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={isLoading}
+            disabled={isLoading || posterProcessing || isImageUploading || isPdfUploading}
           >
             <Send className="w-5 h-5" />
           </button>
@@ -1378,26 +1272,200 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
   // Add back the missing functions
   const handleSendMessage = (event) => {
     event.preventDefault();
-    if (!inputMessage.trim()) return;
+    const message = inputMessage.trim();
+    if (!message) return;
 
-    const userMessage = inputMessage.trim();
+    // Clear input
     setInputMessage('');
-    
+
     // Check for clear command
-    if (userMessage.toLowerCase() === 'clear') {
+    if (message.toLowerCase() === 'clear') {
       clearChat();
       return;
     }
-    
-    // Add user message to chat
-    setMessages(prev => [...prev, {
-      id: prev.length + 1,
-      text: userMessage,
-      isBot: false
-    }]);
 
-    // Handle the message flow
-    handleDocumentFlow(userMessage);
+    // Add user message to chat
+    addMessageToChat({
+      type: 'user',
+      content: message,
+      timestamp: new Date().toISOString()
+    });
+
+    // If we're awaiting input for a field, handle it
+    if (documentData.awaitingInput) {
+      const currentField = documentData.currentField;
+      
+      // Validate the input based on the field type
+      let isValid = true;
+      let errorMessage = '';
+
+      switch (currentField) {
+        case 'Guest Name':
+          if (message.length < 2) {
+            isValid = false;
+            errorMessage = "Please enter a valid guest name (at least 2 characters)";
+          }
+          break;
+
+        case 'Guest Designation':
+          if (message.length < 2) {
+            isValid = false;
+            errorMessage = "Please enter a valid designation (at least 2 characters)";
+          }
+          break;
+
+        case 'Topic':
+          if (message.length < 5) {
+            isValid = false;
+            errorMessage = "Please enter a valid topic (at least 5 characters)";
+          }
+          break;
+
+        case 'Event Date':
+          // Date validation is handled by the date picker
+          break;
+
+        case 'Organizer Department':
+          // Department validation is handled by the department selector
+          break;
+
+        case 'Organizer Faculty Name':
+          if (message.length < 2) {
+            isValid = false;
+            errorMessage = "Please enter a valid faculty name (at least 2 characters)";
+          }
+          break;
+
+        case 'Activity Code':
+          if (message.length < 3) {
+            isValid = false;
+            errorMessage = "Please enter a valid activity code (at least 3 characters)";
+          }
+          break;
+
+        case 'Year':
+          // Year validation is handled by the year selector
+          break;
+
+        case 'No Of Count':
+          if (!/^\d+$/.test(message)) {
+            isValid = false;
+            errorMessage = "Please enter a valid number of participants";
+          }
+          break;
+      }
+
+      if (!isValid) {
+        // Show error message and keep waiting for valid input
+        addMessageToChat({
+          type: 'bot',
+          content: errorMessage,
+          timestamp: new Date().toISOString()
+        });
+        return;
+      }
+
+      // Update the field value
+      setDocumentData(prev => ({
+        ...prev,
+        fields: {
+          ...prev.fields,
+          [currentField]: message
+        },
+        awaitingInput: false
+      }));
+
+      // Function to handle next field transition with delay
+      const transitionToNextField = (nextField, message, options = {}) => {
+        const { showDatePicker, showDepartmentOptions, showYearOptions } = options;
+        
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            addMessageToChat({
+              type: 'bot',
+              content: message,
+              timestamp: new Date().toISOString()
+            });
+            
+            setDocumentData(prev => ({
+              ...prev,
+              currentField: nextField,
+              awaitingInput: true
+            }));
+
+            if (showDatePicker) setShowDatePicker(true);
+            if (showDepartmentOptions) setShowDepartmentOptions(true);
+            if (showYearOptions) setShowYearOptions(true);
+            
+            resolve();
+          }, 1000); // 1 second delay between messages
+        });
+      };
+
+      // Handle field transitions
+      const handleFieldTransition = async () => {
+        switch (currentField) {
+          case 'Guest Name':
+            await transitionToNextField('Guest Designation', "Please enter the guest's designation:");
+            break;
+
+          case 'Guest Designation':
+            await transitionToNextField('Topic', "Please enter the topic of the lecture:");
+            break;
+
+          case 'Topic':
+            await transitionToNextField('Event Date', "Please select the event date:", { showDatePicker: true });
+            break;
+
+          case 'Event Date':
+            await transitionToNextField('Organizer Department', "Please select the organizing department:", { showDepartmentOptions: true });
+            break;
+
+          case 'Organizer Department':
+            await transitionToNextField('Organizer Faculty Name', "Please enter the faculty coordinator's name:");
+            break;
+
+          case 'Organizer Faculty Name':
+            await transitionToNextField('Activity Code', "Please enter the activity code:");
+            break;
+
+          case 'Activity Code':
+            await transitionToNextField('Year', "Please select the target year:", { showYearOptions: true });
+            break;
+
+          case 'Year':
+            await transitionToNextField('No Of Count', "Please enter the expected number of participants:");
+            break;
+
+          case 'No Of Count':
+            setTimeout(() => {
+              addMessageToChat({
+                type: 'bot',
+                content: "Thank you! All required information has been collected. Generating document...",
+                timestamp: new Date().toISOString()
+              });
+              
+              setDocumentData(prev => ({
+                ...prev,
+                awaitingInput: false,
+                currentField: null
+              }));
+              
+              handleGenerateContent();
+            }, 1000);
+            break;
+
+          default:
+            handleDocumentFlow(message);
+            break;
+        }
+      };
+
+      // Start the field transition
+      handleFieldTransition();
+    } else {
+      handleDocumentFlow(message);
+    }
   };
 
   const clearChat = () => {
@@ -1578,7 +1646,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
         <div class="flex flex-col items-center mb-8">
           <img src="${logoUrl}" alt="FXEC Logo" class="h-16 mb-4" />
           <h1 class="text-2xl font-bold tracking-wide text-gray-900 uppercase mb-2">
-            ${documentData.type === 'GuestLecture' ? 'GUEST LECTURE REPORT' : 'REPORT'}
+            ${documentData.type || 'GUEST LECTURE REPORT'}
           </h1>
           <div class="w-48 h-1 bg-blue-600 mx-auto"></div>
         </div>
@@ -1636,6 +1704,27 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
                 <div class="flex items-center">
                   <span class="font-semibold text-gray-800 mr-4">Coordinator:</span>
                   <span class="text-gray-700">${documentData.fields?.['Organizer Faculty Name'] || ''}</span>
+                </div>
+              </div>
+
+              <div class="flex justify-end">
+                <div class="flex items-center">
+                  <span class="font-semibold text-gray-800 mr-4">Department:</span>
+                  <span class="text-gray-700">${documentData.fields?.['Organizer Department'] || ''}</span>
+                </div>
+              </div>
+
+              <div class="flex justify-end">
+                <div class="flex items-center">
+                  <span class="font-semibold text-gray-800 mr-4">Year:</span>
+                  <span class="text-gray-700">${documentData.fields?.['Year'] || ''}</span>
+                </div>
+              </div>
+
+              <div class="flex justify-end">
+                <div class="flex items-center">
+                  <span class="font-semibold text-gray-800 mr-4">Participants:</span>
+                  <span class="text-gray-700">${documentData.fields?.['No Of Count'] || ''}</span>
                 </div>
               </div>
             </div>
@@ -1793,68 +1882,80 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 
   // Update the document header to include the Clear button
   const renderDocumentHeader = () => {
-    // Determine the document title based on type
-    const getDocumentTitle = () => {
-      if (documentData.type === 'GuestLecture') {
-        return 'GUEST LECTURE REPORT';
-      }
-      return 'REPORT';
-    };
-
     return (
-      <div className="bg-white border-b w-full">
-        <div className="w-full mx-auto">
-          <div className="flex items-center justify-between px-6 py-4">
-            <div className="flex items-center space-x-4">
-              <h1 className="text-xl font-bold text-gray-900 tracking-wide">
-                {getDocumentTitle()}
-              </h1>
-            </div>
-            <div className="flex items-center space-x-3">
-              {isEditing && (
-                <button
-                  onClick={handleSaveDocument}
-                  className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2 text-sm font-medium shadow-sm"
+      <div className="flex items-center justify-between p-4 border-b bg-white">
+        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-2">
+             {/* Only show PDF upload button when no document type is selected */}
+             {!documentData.type && (
+              <>
+                <input
+                  type="file"
+                  id="posterUpload"
+                  accept="image/*"
+                  onChange={handlePosterUpload}
+                  className="hidden"
+                  disabled={posterProcessing}
+                />
+                {posterProcessing ? (
+                  <div className="flex items-center px-3 py-2 text-sm font-medium text-gray-500 bg-gray-100 border border-gray-300 rounded-md cursor-not-allowed">
+                    <div className="animate-spin h-4 w-4 mr-2 border-2 border-gray-500 border-t-transparent rounded-full"></div>
+                    Processing...
+                  </div>
+                ) : (
+                <label
+                  htmlFor="posterUpload"
+                  className="flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 cursor-pointer"
                 >
-                  <Save className="w-4 h-4" />
-                  <span>Save Changes</span>
-                </button>
-              )}
-              {/* Only show PDF upload button when no document type is selected */}
-              {!documentData.type && (
-                <button
+                  <Image className="w-4 h-4 mr-2" />
+                  Upload Poster
+                </label>
+                )}
+               <button
                   onClick={() => setShowPdfUpload(true)}
                   className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm font-medium shadow-sm"
                 >
                   <FileUp className="w-4 h-4" />
                   <span>Upload PDF</span>
                 </button>
+              </>
               )}
-              <button
-                onClick={() => setIsEditing(!isEditing)}
-                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm font-medium shadow-sm"
-              >
-                {isEditing ? (
-                  <>
-                    <Eye className="w-4 h-4" />
-                    <span>Preview</span>
-                  </>
-                ) : (
-                  <>
-                    <Edit className="w-4 h-4" />
-                    <span>Edit</span>
-                  </>
-                )}
-              </button>
-              <button 
-                onClick={generatePDF}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 text-sm font-medium shadow-sm"
-              >
-                <Download className="w-4 h-4" />
-                <span>Export PDF</span>
-              </button>
-            </div>
           </div>
+        </div>
+
+        <div className="flex items-center space-x-2">
+          {isEditing && (
+            <button
+              onClick={handleSaveDocument}
+              className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2 text-sm font-medium shadow-sm"
+            >
+              <Save className="w-4 h-4" />
+              <span>Save Changes</span>
+            </button>
+          )}
+          <button
+            onClick={() => setIsEditing(!isEditing)}
+            className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm font-medium shadow-sm"
+          >
+            {isEditing ? (
+              <>
+                <Eye className="w-4 h-4" />
+                <span>Preview</span>
+              </>
+            ) : (
+              <>
+                <Edit className="w-4 h-4" />
+                <span>Edit</span>
+              </>
+            )}
+          </button>
+          <button 
+            onClick={generatePDF}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 text-sm font-medium shadow-sm"
+          >
+            <Download className="w-4 h-4" />
+            <span>Export PDF</span>
+          </button>
         </div>
       </div>
     );
@@ -1887,45 +1988,44 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 
   // Update the handleChatButtonClick function to correctly focus the editor
   const handleChatButtonClick = (action) => {
-    if (action === 'addImages') {
-      // Set flag that user needs to add images
-      setNeedsImageUpload(true);
-      
-      // Start the Joyride tour to guide user to image button
-      startImageUploadTour();
-      
-      setMessages(prev => [...prev, {
-        id: Date.now(),
-        text: "Click on the highlighted image button in the editor toolbar to add your event images.",
-        isBot: true
-      }]);
-      
-      // Switch to edit mode if not already there
-      if (!isEditing) {
-        setIsEditing(true);
-      }
-      
-      // Focus on editor - only try to focus if the editor exists
-      if (editorRef.current) {
-        try {
-          // Use the proper focus method from our forwarded ref
-          editorRef.current.focus();
-        } catch (err) {
-          console.warn('Could not focus editor:', err);
-          // As a fallback, try to focus the editor container
-          const editorElement = document.querySelector('.ql-editor');
-          if (editorElement) {
-            editorElement.focus();
-          }
+    switch (action) {
+      case 'addImages':
+        // Set flag that user needs to add images
+        setNeedsImageUpload(true);
+        
+        // Start the Joyride tour to guide user to image button
+        startImageUploadTour();
+        
+        setMessages(prev => [...prev, {
+          id: Date.now(),
+          text: "Click on the highlighted image button in the editor toolbar to add your event images.",
+          isBot: true
+        }]);
+        
+        // Switch to edit mode if not already there
+        if (!isEditing) {
+          setIsEditing(true);
         }
-      }
-    } else if (action === 'skipImages') {
-      setNeedsImageUpload(false);
-      setMessages(prev => [...prev, {
-        id: Date.now(),
-        text: "No problem! Your document has been created without event images. You can continue editing the document.",
-        isBot: true
-      }]);
+        
+        // Focus on editor
+        if (editorRef.current) {
+          editorRef.current.focus();
+        }
+
+        // Highlight the image button
+        highlightImageButton();
+        break;
+
+      case 'skipImages':
+        setMessages(prev => [...prev, {
+          id: Date.now(),
+          text: "No problem! Your document has been generated without images. You can continue editing or export it as needed.",
+          isBot: true
+        }]);
+        break;
+
+      default:
+        break;
     }
   };
 
@@ -1984,26 +2084,26 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
           }]);
           
           // After image is added, display font style options
-          setTimeout(() => {
-            // Add message about font options
-            setMessages(prev => [...prev, {
-              id: Date.now() + 1,
-              text: "Would you like to change the font style of your document?",
-              isBot: true
-            }]);
+          // setTimeout(() => {
+          //   // Add message about font options
+          //   setMessages(prev => [...prev, {
+          //     id: Date.now() + 1,
+          //     text: "Would you like to change the font style of your document?",
+          //     isBot: true
+          //   }]);
             
-            // Add font style buttons with display names
-            setMessages(prev => [...prev, {
-              id: Date.now() + 2,
-              text: "",
-              isBot: true,
-              fontButtons: true,
-              fonts: Object.entries(fontNameMap).map(([key, value]) => ({
-                label: value,
-                value: value
-              }))
-            }]);
-          }, 1000); // Show font options after a short delay
+          //   // Add font style buttons with display names
+          //   setMessages(prev => [...prev, {
+          //     id: Date.now() + 2,
+          //     text: "",
+          //     isBot: true,
+          //     fontButtons: true,
+          //     fonts: Object.entries(fontNameMap).map(([key, value]) => ({
+          //       label: value,
+          //       value: value
+          //     }))
+          //   }]);
+          // }, 1000); // Show font options after a short delay
 
           // Remove the event listener
           imageButton.removeEventListener('click', handleImageClick);
@@ -2126,70 +2226,31 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 
   // Update handleFontSelect to maintain cursor position
   const handleFontSelect = (fontFamily) => {
-    // Convert display name to CSS-safe name if needed
-    const cssSafeFontName = Object.entries(fontNameMap).find(
-      ([key, value]) => value === fontFamily
-    )?.[0] || fontFamily;
-    
-    // Update the document font in the state
-    setSelectedFormat(prev => ({
-      ...prev,
-      fontFamily
-    }));
-    
-    // Apply the font using CSS and Quill format - only to the editor content
     if (editorRef.current) {
       try {
         const editor = editorRef.current.getEditor();
         
-        // Save current selection before formatting
+        // Save current selection
         const currentSelection = editor.getSelection();
         
-        // Get the content
-        const content = editor.getText();
+        // Update the format state
+        setSelectedFormat(prev => ({
+          ...prev,
+          fontFamily
+        }));
+
+        // Apply font to the entire editor content
+        editor.format('font', fontFamily);
         
-        // Find the position after the header (after the first two newlines)
-        let startIndex = 0;
-        let newlineCount = 0;
-        for (let i = 0; i < content.length; i++) {
-          if (content[i] === '\n') {
-            newlineCount++;
-            if (newlineCount === 2) {
-              startIndex = i + 1;
-              break;
-            }
-          }
+        // Update the editor container style
+        const editorContainer = editor.root;
+        if (editorContainer) {
+          editorContainer.style.fontFamily = `${fontFamily}, sans-serif`;
         }
         
-        // If we couldn't find two newlines, set a default position
-        if (startIndex === 0) {
-          startIndex = content.indexOf('\n') + 1 || 0;
-        }
-        
-        // Format only the document content area
-        const contentLength = editor.getLength() - startIndex;
-        if (contentLength > 0) {
-          editor.formatText(startIndex, contentLength, 'font', cssSafeFontName);
-        }
-        
-        // Update the CSS for the content area
-        const editorElement = editor.root.querySelector('.ql-editor');
-        if (editorElement) {
-          // Create or update the style element for the content area
-          let styleEl = document.getElementById('content-area-style');
-          if (!styleEl) {
-            styleEl = document.createElement('style');
-            styleEl.id = 'content-area-style';
-            document.head.appendChild(styleEl);
-          }
-          
-          // Apply styles that target only the content area
-          styleEl.textContent = `
-            .ql-editor > *:not(:first-child) {
-              font-family: "${fontFamily}", sans-serif !important;
-            }
-          `;
-        }
+        // Apply font to all existing content
+        const delta = editor.getContents();
+        editor.setContents(delta);
         
         // Restore selection if it existed
         if (currentSelection) {
@@ -2199,14 +2260,16 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
         // Add confirmation message
         setMessages(prev => [...prev, {
           id: Date.now(),
-          text: `Font changed to ${fontFamily} for document content.`,
+          text: `Font changed to ${fontFamily}.`,
           isBot: true
         }]);
 
+        // Force a re-render of the editor content
+        const currentContent = editor.root.innerHTML;
+        setEditorContent(currentContent);
+        
       } catch (err) {
         console.error('Error applying font:', err);
-        
-        // Show error message
         setMessages(prev => [...prev, {
           id: Date.now(),
           text: `Error changing font: ${err.message}`,
@@ -2870,6 +2933,350 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
         </div>
       </div>
     );
+  };
+
+  const [ws, setWs] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingProgress, setProcessingProgress] = useState([]);
+
+  // Add addMessageToChat function
+  const addMessageToChat = (message) => {
+    setMessages(prev => [...prev, {
+      id: Date.now(),
+      text: message.content,
+      isBot: message.type === 'bot',
+      timestamp: message.timestamp
+    }]);
+  };
+
+  // Function to connect to WebSocket
+  const connectWebSocket = () => {
+    // Close existing connection if any
+    if (ws && ws.readyState !== WebSocket.CLOSED) {
+      ws.close();
+    }
+
+    const socket = new WebSocket('ws://localhost:8000/ws/process-poster');
+    
+    socket.onopen = () => {
+      console.log('WebSocket Connected');
+      // Remove any existing loading messages
+      setMessages(prev => prev.filter(msg => !msg.isLoading));
+      addMessageToChat({
+        type: 'bot',
+        content: 'Connected to server. Processing poster...',
+        timestamp: new Date().toISOString(),
+        isLoading: true
+      });
+    };
+
+    socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      
+      if (data.status === 'error') {
+        // Remove loading message and show error
+        setMessages(prev => prev.filter(msg => !msg.isLoading));
+        addMessageToChat({
+          type: 'bot',
+          content: `Error: ${data.message}`,
+          timestamp: new Date().toISOString()
+        });
+        setIsProcessing(false);
+        setPosterProcessing(false);
+        return;
+      }
+
+      if (data.status === 'processing') {
+        // Update progress
+        setProcessingProgress(prev => [...prev, data]);
+        
+        // Remove previous loading message and add new progress message
+        setMessages(prev => prev.filter(msg => !msg.isLoading));
+        addMessageToChat({
+          type: 'bot',
+          content: data.message,
+          timestamp: new Date().toISOString(),
+          isLoading: true
+        });
+      }
+
+      if (data.status === 'complete' || data.status === 'success') {
+        // Remove loading message
+        setMessages(prev => prev.filter(msg => !msg.isLoading));
+        
+        // Add completion message
+        addMessageToChat({
+          type: 'bot',
+          content: 'Poster processing complete! Starting document generation...',
+          timestamp: new Date().toISOString()
+        });
+
+        // Process the extracted data automatically
+        if (data.data) {
+          processExtractedData(data.data);
+        }
+
+        setIsProcessing(false);
+        setPosterProcessing(false);
+      }
+    };
+
+    socket.onerror = (error) => {
+      console.error('WebSocket Error:', error);
+      // Remove loading message and show error
+      setMessages(prev => prev.filter(msg => !msg.isLoading));
+      addMessageToChat({
+        type: 'bot',
+        content: 'Error connecting to the server. Please try again.',
+        timestamp: new Date().toISOString()
+      });
+      setIsProcessing(false);
+      setPosterProcessing(false);
+    };
+
+    socket.onclose = () => {
+      console.log('WebSocket Disconnected');
+      setIsProcessing(false);
+      setPosterProcessing(false);
+    };
+
+    setWs(socket);
+    return socket;
+  };
+
+  // Modified handlePosterUpload function
+  const handlePosterUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    setIsProcessing(true);
+    setPosterProcessing(true);
+    setProcessingProgress([]);
+
+    // Add initial message to chat with loading state
+    addMessageToChat({
+      type: 'bot',
+      content: 'Starting poster processing...',
+      timestamp: new Date().toISOString(),
+      isLoading: true,
+      isLoader: true
+    });
+
+    try {
+      // Connect to WebSocket
+      const socket = connectWebSocket();
+
+      // Wait for the connection to be established
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('WebSocket connection timeout'));
+        }, 5000); // 5 second timeout
+
+        if (socket.readyState === WebSocket.OPEN) {
+          clearTimeout(timeout);
+          resolve();
+        } else {
+          socket.onopen = () => {
+            clearTimeout(timeout);
+            resolve();
+          };
+          socket.onerror = (error) => {
+            clearTimeout(timeout);
+            reject(error);
+          };
+        }
+      });
+
+      // Read and send image data
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(reader.result);
+        } else {
+          // Remove loading message and show error
+          setMessages(prev => prev.filter(msg => !msg.isLoading));
+          addMessageToChat({
+            type: 'bot',
+            content: 'Error: WebSocket connection is not ready. Please try again.',
+            timestamp: new Date().toISOString()
+          });
+          setPosterProcessing(false);
+          setIsProcessing(false);
+        }
+      };
+      reader.onerror = (error) => {
+        // Remove loading message and show error
+        setMessages(prev => prev.filter(msg => !msg.isLoading));
+        addMessageToChat({
+          type: 'bot',
+          content: `Error reading file: ${error.message}`,
+          timestamp: new Date().toISOString()
+        });
+        setPosterProcessing(false);
+        setIsProcessing(false);
+      };
+      reader.readAsArrayBuffer(file);
+
+    } catch (error) {
+      console.error('Error:', error);
+      // Remove loading message and show error
+      setMessages(prev => prev.filter(msg => !msg.isLoading));
+      addMessageToChat({
+        type: 'bot',
+        content: `Error: ${error.message}`,
+        timestamp: new Date().toISOString()
+      });
+      setPosterProcessing(false);
+      setIsProcessing(false);
+    }
+  };
+
+  // Reset processing state when component unmounts
+  useEffect(() => {
+    return () => {
+      if (ws) {
+        ws.close();
+      }
+      setIsProcessing(false);
+      setPosterProcessing(false);
+      setProcessingProgress([]);
+    };
+  }, []);
+
+  // Update processing state when poster upload starts
+  useEffect(() => {
+    if (posterProcessing) {
+      setIsProcessing(true);
+    } else {
+      // Add a small delay before enabling buttons to prevent accidental clicks
+      const timer = setTimeout(() => {
+        setIsProcessing(false);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [posterProcessing]);
+
+  // Add new function to handle automated responses
+  const processExtractedData = (data) => {
+    // Set document type and start the flow
+    setDocumentData({
+      type: 'GuestLecture',
+      currentField: 'Guest Name',
+      awaitingInput: true,
+      fields: {}
+    });
+
+    // Add initial message
+    addMessageToChat({
+      type: 'user',
+      content: 'guest lecture',
+      timestamp: new Date().toISOString()
+    });
+
+    // Function to simulate the conversation
+    const simulateField = (field, value, nextField, nextQuestion) => {
+      return new Promise(resolve => {
+        // Bot asks question
+        addMessageToChat({
+          type: 'bot',
+          content: field.question,
+          timestamp: new Date().toISOString()
+        });
+
+        // Simulate user response
+        setTimeout(() => {
+          if (value) {
+            addMessageToChat({
+              type: 'user',
+              content: value,
+              timestamp: new Date().toISOString()
+            });
+
+            // Update document data
+            setDocumentData(prev => ({
+              ...prev,
+              fields: {
+                ...prev.fields,
+                [field.name]: value
+              }
+            }));
+
+            if (nextField && nextQuestion) {
+              setDocumentData(prev => ({
+                ...prev,
+                currentField: nextField,
+                awaitingInput: true
+              }));
+            }
+          }
+          resolve();
+        }, 500);
+      });
+    };
+
+    // Process fields sequentially
+    const processFields = async () => {
+      const fields = [
+        { name: 'Guest Name', value: data.document_fields?.['Guest Name'] || data.guest_name, question: "Please enter the name of the guest lecturer:" },
+        { name: 'Guest Designation', value: data.document_fields?.['Guest Designation'] || data.guest_designation, question: "Please enter the guest's designation:" },
+        { name: 'Topic', value: data.document_fields?.['Topic'] || data.event_title, question: "Please enter the topic of the lecture:" },
+        { name: 'Event Date', value: data.document_fields?.['Event Date'] || data.event_date, question: "Please select the event date:", type: "date" },
+        { name: 'Organizer Department', value: data.document_fields?.['Organizer Department'] || data.department, question: "Please select the organizing department:", type: "department" },
+        { name: 'Organizer Faculty Name', value: data.document_fields?.['Organizer Faculty Name'] || data.coordinator, question: "Please enter the faculty coordinator's name:" },
+        { name: 'Activity Code', value: null, question: "Please enter the activity code:" },
+        { name: 'Year', value: null, question: "Please select the target year:", type: "year" },
+        { name: 'No Of Count', value: null, question: "Please enter the expected number of participants:" }
+      ];
+
+      for (let i = 0; i < fields.length; i++) {
+        const field = fields[i];
+        const nextField = fields[i + 1];
+        
+        if (field.value) {
+          await simulateField(
+            field,
+            field.value,
+            nextField?.name,
+            nextField?.question
+          );
+        } else {
+          // For missing fields, wait for manual input
+          addMessageToChat({
+            type: 'bot',
+            content: field.question,
+            timestamp: new Date().toISOString()
+          });
+          
+          setDocumentData(prev => ({
+            ...prev,
+            currentField: field.name,
+            awaitingInput: true
+          }));
+          
+          // Handle special field types
+          if (field.type === 'date') {
+            setShowDatePicker(true);
+          } else if (field.type === 'department') {
+            setShowDepartmentOptions(true);
+          } else if (field.type === 'year') {
+            setShowYearOptions(true);
+          }
+          
+          // Wait for user input
+          await new Promise(resolve => {
+            const checkInterval = setInterval(() => {
+              if (documentData.fields[field.name]) {
+                clearInterval(checkInterval);
+                resolve();
+              }
+            }, 100);
+          });
+        }
+      }
+    };
+
+    // Start processing fields
+    processFields();
   };
 
   // Modify the main component return to handle the case when no chat is selected
