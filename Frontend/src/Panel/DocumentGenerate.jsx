@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   FileText, Send, Download, Bold, Italic, Image, List, 
   ListOrdered, Link as LinkIcon, Heading1, Heading2,
@@ -13,6 +13,10 @@ import 'react-quill/dist/quill.snow.css';
 import jsPDF from "jspdf";
 import "jspdf-autotable";
 import Joyride, { STATUS } from 'react-joyride';
+import html2pdf from 'html2pdf.js';
+import html2canvas from 'html2canvas';
+import { Document, Packer, Paragraph, TextRun, Table, TableCell, TableRow, AlignmentType, ImageRun } from 'docx';
+import { saveAs } from 'file-saver';
 
 // Add a mapping of CSS-safe names to display names
 const fontNameMap = {
@@ -101,6 +105,32 @@ const CustomQuillEditor = React.forwardRef((props, ref) => {
           editor.focus();
           // Don't set the cursor at the end when focusing
         }
+      }
+    },
+    getContent: () => {
+      try {
+        console.log('getContent called in CustomQuillEditor');
+        // First try to get the content from the editor
+        if (editorRef.current) {
+          const editor = editorRef.current.getEditor();
+          if (editor && editor.root) {
+            console.log('Getting content from editor.root.innerHTML');
+            return editor.root.innerHTML || '';
+          }
+        }
+        
+        // If that fails, try to get it from the DOM directly
+        const editorEl = document.querySelector('.ql-editor');
+        if (editorEl) {
+          console.log('Getting content from DOM .ql-editor element');
+          return editorEl.innerHTML || '';
+        }
+        
+        console.warn('Could not get editor content from any source');
+        return '';
+      } catch (error) {
+        console.error('Error in getContent:', error);
+        return '';
       }
     }
   }));
@@ -238,26 +268,111 @@ const EditorToolbar = ({ onFormatClick, selectedFormat, onFormatChange }) => {
 };
 
 const DocumentGenerate = () => {
+  // Core state declarations
+  const [currentChatId, setCurrentChatId] = useState(null);
+  const [chatHistory, setChatHistory] = useState({});
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isEditing, setIsEditing] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingMessageId, setLoadingMessageId] = useState(null);
   const [posterProcessing, setPosterProcessing] = useState(false);
-  const editorRef = useRef(null);
   const [editorContent, setEditorContent] = useState('');
-  const [selectedFormat, setSelectedFormat] = useState({
-    fontSize: '16px',
-    fontFamily: 'Arial',
-    lastSelection: null
-  });
-  const chatContainerRef = useRef(null);
-  const fileInputRef = useRef(null);
-
   const [documentData, setDocumentData] = useState({
     type: null,
     currentField: null,
     fields: {}
   });
+  const [showChatList, setShowChatList] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [chatToDelete, setChatToDelete] = useState(null);
+  const [notification, setNotification] = useState({ type: '', message: '' });
+  const [showNotification, setShowNotification] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [selectedFormat, setSelectedFormat] = useState({
+    fontSize: '16px',
+    fontFamily: 'Arial',
+    lastSelection: null
+  });
+
+  // Refs
+  const editorRef = useRef(null);
+  const chatContainerRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  // Chat content utility functions
+  const saveChatContent = (chatId, editorContent, previewContent) => {
+    console.log(`Saving chat content for chat ${chatId}`);
+    try {
+      // Get existing chat data from localStorage
+      const chatData = JSON.parse(localStorage.getItem('documentGeneratorChats')) || {};
+      
+      // Create new entry if chat doesn't exist
+      if (!chatData[chatId]) {
+        console.log(`Creating new chat entry for ${chatId}`);
+        chatData[chatId] = {
+          id: chatId,
+          messages: messages,
+          lastUpdated: new Date().toISOString(),
+          title: determineConversationTitle(),
+          content: {}
+        };
+      }
+      
+      // Update the content with original structure
+      const updatedContent = {
+        ...(chatData[chatId].content || {}),
+            editorContent,
+            lastUpdated: new Date().toISOString()
+      };
+      
+      // Only update previewContent if it's provided
+      if (previewContent !== null) {
+        updatedContent.previewContent = previewContent;
+          }
+      
+      chatData[chatId] = {
+        ...chatData[chatId],
+        content: updatedContent
+        };
+      
+      // Save to localStorage
+        localStorage.setItem('documentGeneratorChats', JSON.stringify(chatData));
+      console.log(`Successfully saved chat ${chatId} content`);
+    } catch (error) {
+      console.error('Error saving chat content:', error);
+      // Log details about the data that we're trying to save
+      console.error('Chat ID:', chatId);
+      console.error('Editor content length:', editorContent ? editorContent.length : 'undefined');
+      console.error('Preview content length:', previewContent ? previewContent.length : 'undefined');
+      
+      // Check if we're hitting localStorage limits
+      try {
+        const totalSize = new Blob([JSON.stringify(localStorage)]).size;
+        console.error('Current localStorage size:', totalSize, 'bytes');
+        console.error('Remaining localStorage space:', (5 * 1024 * 1024) - totalSize, 'bytes');
+      } catch (e) {
+        console.error('Error calculating localStorage size:', e);
+      }
+      
+      throw new Error(`Failed to save chat content: ${error.message}`);
+    }
+  };
+
+  const loadChatContent = (chatId) => {
+    try {
+      const chatData = JSON.parse(localStorage.getItem('documentGeneratorChats')) || {};
+      if (chatData[chatId]?.content) {
+        return {
+          editorContent: chatData[chatId].content.editorContent || '',
+          previewContent: chatData[chatId].content.previewContent || null
+        };
+      }
+    } catch (error) {
+      console.error('Error loading chat content:', error);
+    }
+    return { editorContent: '', previewContent: null };
+  };
 
   const DEPARTMENTS = ["CSBS", "CSE", "ECE", "MECH"];
   const YEARS = ["First Year", "Second Year", "Third Year", "Fourth Year"];
@@ -341,6 +456,7 @@ const DocumentGenerate = () => {
   // Function to handle content change
   const handleEditorChange = (content) => {
     setEditorContent(content);
+    setHasUnsavedChanges(true);
     
     // Update word count
     const text = editorRef.current?.getEditor().getText() || '';
@@ -353,6 +469,27 @@ const DocumentGenerate = () => {
       setRedoStack([]);
       
       // Don't modify selection here to keep cursor in place
+    }
+    
+    // Save editor content to documentGeneratorChats for the current chat
+    if (currentChatId) {
+      saveChatContent(currentChatId, content, null);
+    }
+  };
+
+  // Helper function to save editor content for a specific chat
+  const saveEditorContentForChat = (chatId, content) => {
+    saveChatContent(chatId, content, null);
+  };
+
+  // Helper function to load editor content for a specific chat - keep this for clarity
+  const loadEditorContentForChat = (chatId) => {
+    try {
+      const chatData = JSON.parse(localStorage.getItem('documentGeneratorChats')) || {};
+      return chatData[chatId]?.content?.editorContent || '';
+    } catch (error) {
+      console.error('Error loading editor content for chat:', error);
+      return '';
     }
   };
 
@@ -372,7 +509,7 @@ const DocumentGenerate = () => {
 10. Coaching Class Time Table
 11. Guest Lecture
 
-Or, if you have an existing PDF report, click the "Upload PDF" button below to extract and edit its content.`;
+`;
 
     setMessages([{
       id: 1,
@@ -448,423 +585,143 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       }, 500);
     }
   };
-
-  // Update handleImageUpload function to improve image handling
-  const handleImageUpload = async (e) => {
-    const files = Array.from(e.target.files);
-    setIsImageUploading(true);
-    
-    try {
-      // Generate unique IDs for each image with more readable names
-      const newPreviewImages = files.map(file => {
-        return {
-          id: `IMG_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          url: URL.createObjectURL(file),
-          name: file.name,
-          type: file.type,
-          size: file.size
-        };
-      });
-      
-      setPreviewImages(prev => [...prev, ...newPreviewImages]);
-      setUploadedImages(prev => [...prev, ...files]);
-
-      // After uploading images, prepare the document data
-      const documentJson = {
-        discussionId,
-        type: documentData.type,
-        fields: documentData.fields,
-        images: newPreviewImages.map(img => ({
-          id: img.id,
-          name: img.name,
-          type: img.type,
-          size: img.size,
-          url: img.url
-        })),
-        createdAt: new Date().toISOString()
-      };
-
-      // Load current documents data
-      const currentData = loadDocumentsData();
-      
-      // Update with new document
-      const updatedData = {
-        ...currentData,
-        documents: {
-          ...currentData.documents,
-          [discussionId]: documentJson
-        }
-      };
-
-      // Save to localStorage
-      saveDocument(updatedData);
-
-      // Add success message to chat
-      setMessages(prev => [...prev, {
-        id: Date.now(),
-        text: `Successfully uploaded ${files.length} image(s). The images have been added to your document.`,
-        isBot: true
-      }]);
-
-      // Add image preview to chat
-      setMessages(prev => [...prev, {
-        id: Date.now() + 1,
-        text: "",
-        images: newPreviewImages,
-        isBot: false,
-        isUserUpload: true
-      }]);
-
-    } catch (error) {
-      console.error('Error:', error);
-      setMessages(prev => [...prev, {
-        id: Date.now(),
-        text: 'An error occurred while uploading images. Please try again.',
-        isBot: true
-      }]);
-    } finally {
-      setIsImageUploading(false);
-    }
-  };
-
-  // Update handleImageSubmit function to properly display images in the editor
-  const handleImageSubmit = async () => {
-    if (uploadedImages.length === 0) return;
-
-    setIsLoading(true);
-    try {
-      // Add loading message to chat
-      const loadingMessageId = Date.now();
-      setMessages(prev => [...prev, {
-          id: loadingMessageId,
-          text: 'Processing images and generating content...',
-          isBot: true,
-          isLoading: true
-      }]);
-
-      // Create document data with images
-      const imageData = {
-        discussionId,
-        type: documentData.type,
-        fields: documentData.fields,
-        images: previewImages.map(img => ({
-          id: img.id,
-          name: img.name,
-          type: img.type,
-          size: img.size,
-          url: img.url
-        }))
-      };
-
-      // Load current documents data
-      const currentData = loadDocumentsData();
-      
-      // Update with new document
-      const updatedData = {
-        ...currentData,
-        documents: {
-          ...currentData.documents,
-          [discussionId]: {
-            ...imageData,
-            createdAt: new Date().toISOString()
-          }
-        }
-      };
-
-      // Save document data to localStorage
-      const saved = saveDocument(updatedData);
-
-      if (saved) {
-        // Add images to chat with improved display
-        setMessages(prev => [
-          ...prev,
-          {
-            id: prev.length + 1,
-            text: `Uploaded ${uploadedImages.length} image(s)`,
-            images: previewImages,
-            isBot: false,
-            isUserUpload: true
-          }
-        ]);
-
-        // Call the API to generate content without sending images
-        const response = await fetch('http://localhost:8000/api/generate-content', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                type: documentData.type,
-                fields: documentData.fields
-            }),
-        });
-
-        const data = await response.json();
-
-        if (data.error) {
-          // Remove loading message and show error
-          setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
-            setMessages(prev => [...prev, {
-            id: Date.now(),
-                text: `Error: ${data.error}`,
-                isBot: true
-            }]);
-            return;
-        }
-
-        // Process content into pages
-        const content = data.content || '';
-        const pages = content.split('<div class="page-break"></div>');
-        setDocumentContent(pages);
-        setTotalPages(pages.length);
-
-        // Generate improved HTML content for editor with images
-        const editorContent = pages.map((page, index) => `
-          <div class="page" style="page-break-after: always; font-family: ${selectedFormat.fontFamily};">
-            ${page}
-          </div>
-        `).join('') + `
-          <div class="event-images" style="margin-top: 2rem;">
-            <h2 style="font-size: 1.5rem; font-weight: bold; margin-bottom: 1.5rem; font-family: ${selectedFormat.fontFamily}; color: #2563eb; background-color: #f3f4f6; padding: 8px; border-radius: 4px;">Event Images</h2>
-            ${previewImages.map(img => `
-              <div style="margin-bottom: 1.5rem;">
-                <p style="font-size: 0.875rem; color: #4b5563; margin-bottom: 0.5rem; font-family: ${selectedFormat.fontFamily};">${img.name}</p>
-                <img src="${img.url}" alt="${img.name}" style="max-width: 100%; display: block; margin-bottom: 1rem; border-radius: 0.375rem;" />
-              </div>
-            `).join('')}
-          </div>
-        `;
-
-        // Remove loading message and update with success message and sections
-        setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
-        setMessages(prev => [
-          ...prev,
-          {
-            id: Date.now(),
-            text: "Document has been generated successfully!",
-            isBot: true
-          }
-        ]);
-
-        // Add sections to chat
-        if (data.sections) {
-          Object.entries(data.sections).forEach(([section, content]) => {
-            setMessages(prev => [...prev, {
-              id: Date.now() + Math.random(),
-              text: `**${section}**\n\n${content}`,
-              isBot: true,
-              isContent: true
-            }]);
-          });
-        }
-
-        // Update both chat and document panel
-        setEditorContent(editorContent);
-        setPreviewContent(data);
-        setWordCount(data.word_count);
-
-        // Clear the upload states
-        setUploadedImages([]);
-        setPreviewImages([]);
-
-        // Move to next step in document flow
-        setDocumentData(prev => ({
-          ...prev,
-          currentField: null,
-          fields: {
-            ...prev.fields,
-            images: imageData.images
-          }
-        }));
-      }
-    } catch (error) {
-        console.error('Error:', error);
-      setMessages(prev => prev.filter(msg => msg.isLoading));
-        setMessages(prev => [...prev, {
-        id: Date.now(),
-            text: 'An error occurred while generating the content. Please try again.',
-            isBot: true
-        }]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Add function to get stored document data
-  const getStoredDocument = (docId) => {
-    return documentStorage[docId];
-  };
-
-  // Update removeImage function
-  const removeImage = (index) => {
-    const imageToRemove = previewImages[index];
-    
-    // Remove from preview and uploaded arrays
-    setPreviewImages(prev => prev.filter((_, i) => i !== index));
-    setUploadedImages(prev => prev.filter((_, i) => i !== index));
-    
-    // Remove from storage
-    if (imageToRemove?.id) {
-      setDocumentStorage(prev => ({
-        ...prev,
-        [discussionId]: {
-          ...prev[discussionId],
-          images: prev[discussionId]?.images.filter(img => img.id !== imageToRemove.id) || []
-        }
-      }));
-    }
-  };
-
-  // Update ImagePreview component
-  const ImagePreview = ({ images, onRemove }) => {
-    return (
-      <div className="flex flex-col gap-4 mt-2 p-2 bg-white rounded-lg">
-        {images.map((image, index) => (
-          <div key={index} className="relative group max-w-[250px]">
-            <div className="bg-blue-500 text-white text-sm py-1 px-2 rounded-t-md">
-              {image.name}
-            </div>
-            <img
-              src={image.url}
-              alt={image.name}
-              className="w-full h-auto object-contain rounded-b-md"
-            />
-            <button
-              onClick={() => onRemove(index)}
-              className="absolute top-2 right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        ))}
-      </div>
-    );
-  };
-
+  
   // Update renderMessage function to show full-size images in chat
   const renderMessage = (message) => {
-    if (message.isLoading) {
+    const isBot = message.isBot;
+    const messageClass = isBot 
+      ? 'bg-gradient-to-br from-gray-50 to-gray-100 border border-gray-200'
+      : 'bg-gradient-to-br from-blue-500 to-blue-600 text-white';
+    const alignmentClass = isBot ? 'justify-start' : 'justify-end';
+
+    // Function to format welcome message with options
+    const formatWelcomeMessage = (text) => {
+      if (!text.includes("Hello! I'm Siraj AI!")) return text;
+
+      const parts = text.split('Please select from the following options:');
+      if (parts.length !== 2) return text;
+
+      const [intro, options] = parts;
+      const optionsList = options.split(/\d+\./).filter(Boolean)
+        .map(option => option.trim())
+        .filter(option => option !== '');
+
       return (
-        <div key={message.id} className="mb-4 text-left">
-          <div className="inline-block p-4 rounded-lg bg-gray-100 text-gray-800 max-w-[90%]">
-            <div className="flex items-center gap-2">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-              <span>{message.text}</span>
+        <div className="space-y-4">
+          <p className={`${isBot ? 'text-gray-800' : 'text-white'} font-medium`}>{intro.trim()}</p>
+          <p className={`${isBot ? 'text-gray-800' : 'text-white'} font-medium`}>Please select from the following options:</p>
+          <div className="space-y-2">
+            {optionsList.map((option, index) => (
+              <div key={index} className="flex items-start gap-3 group">
+                <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-blue-600 text-white rounded-full text-sm font-medium shadow-sm group-hover:shadow-md transition-shadow">
+                  {index + 1}
+                </span>
+                <span className={`${isBot ? 'text-gray-800' : 'text-white'} group-hover:opacity-90 transition-opacity`}>
+                  {option}
+                </span>
+                </div>
+            ))}
+              </div>
+          <div className={`mt-4 ${isBot ? 'text-gray-800' : 'text-white'}`}>
+            Or, if you have an existing PDF report, click the "Upload PDF" button below to extract and edit its content.
+          </div>
+        </div>
+      );
+    };
+
+      return (
+      <div key={message.id} className={`flex ${alignmentClass} mb-6 px-4`}>
+        <div className={`flex ${isBot ? 'flex-row' : 'flex-row-reverse'} items-start max-w-[85%] group`}>
+          {/* Static bot profile or user profile */}
+          {isBot && !message.isLoading ? (
+            <BotProfile />
+          ) : !message.isLoading && (
+            <div className="flex-shrink-0 w-10 h-10 rounded-full overflow-hidden mx-2 ring-2 ring-blue-500/20">
+              <img
+                src={`${process.env.PUBLIC_URL}/user-avatar.png`}
+                alt="User"
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  e.target.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%234B5563"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>';
+                }}
+              />
             </div>
-          </div>
-        </div>
-      );
-    }
+          )}
 
-    if (message.isError) {
-      return (
-        <div key={message.id} className="mb-4 text-left">
-          <div className="inline-block p-4 rounded-lg bg-red-50 text-red-700 border border-red-200 max-w-[90%]">
-            <div className="flex items-start gap-2">
-              <span className="text-red-500">⚠️</span>
-              <span>{message.text}</span>
-            </div>
+          {/* Message Content */}
+          <div className="flex flex-col flex-1">
+            {/* Sender Name - Only show for non-loading messages */}
+            {!message.isLoading && (
+              <div className={`text-sm font-medium mb-1 ${isBot ? 'text-gray-700' : 'text-right text-gray-700'}`}>
+                {isBot ? 'Siraj AI' : 'Mohamed Siraj'}
           </div>
-        </div>
-      );
-    }
-
-    if (message.isContent) {
-      return (
-        <div key={message.id} className="mb-4 text-left">
-          <div className="inline-block p-4 rounded-lg bg-gray-100 text-gray-800 max-w-[90%]">
-            <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(message.text) }} />
+            )}
+            
+            {/* Message Bubble */}
+            <div className={`${messageClass} p-4 rounded-lg shadow-sm hover:shadow-md transition-shadow ${message.isLoading ? 'ml-12' : ''}`}>
+              {message.isLoading ? (
+                <div className="flex items-center">
+                  <span className="mr-2 text-gray-800">{message.text}</span>
+                  <div className="loading-dots inline-flex">
+                    <span className="dot">.</span>
+                    <span className="dot">.</span>
+                    <span className="dot">.</span>
           </div>
-        </div>
-      );
-    }
-
-    if (message.buttons) {
-      return (
-        <div key={message.id} className="mb-4 text-left">
-          <div className="flex gap-2">
+                  <style jsx>{`
+                    .loading-dots .dot {
+                      animation: blink 1.4s infinite both;
+                      font-size: 20px;
+                      line-height: 1;
+                      margin: 0 1px;
+                      color: #4B5563;
+                    }
+                    .loading-dots .dot:nth-child(2) { animation-delay: 0.2s; }
+                    .loading-dots .dot:nth-child(3) { animation-delay: 0.4s; }
+                    @keyframes blink {
+                      0%, 100% { opacity: 0.2; }
+                      20% { opacity: 1; }
+                    }
+                  `}</style>
+                </div>
+              ) : message.buttons ? (
+                <div>
+                  <div className={`${isBot ? 'text-gray-800' : 'text-white'} mb-3`}>{message.text}</div>
+                  <div className="flex flex-wrap gap-2">
             {message.buttons.map((button, index) => (
               <button
                 key={index}
                 onClick={() => handleChatButtonClick(button.action)}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                        className={`px-4 py-2 ${
+                          isBot 
+                            ? 'bg-blue-600 text-white hover:bg-blue-700' 
+                            : 'bg-white text-blue-600 hover:bg-blue-50'
+                        } rounded shadow-sm hover:shadow-md transition-all`}
               >
                 {button.text}
               </button>
             ))}
           </div>
         </div>
-      );
-    }
-
-    if (message.fontButtons) {
-      return (
-        <div key={message.id} className="mb-4 text-left">
-          <div className="flex flex-wrap gap-2">
-            {message.fonts.map((font, index) => (
-              <button
-                key={index}
-                onClick={() => handleFontSelect(font.value)}
-                className="px-4 py-2 border border-gray-300 bg-white rounded-lg hover:bg-gray-100 transition-colors"
-                style={{ fontFamily: font.value }}
-              >
-                {font.label}
-              </button>
-            ))}
+              ) : (
+                <div className={`${isBot ? 'text-gray-800' : 'text-white'} break-words`}>
+                  {formatWelcomeMessage(message.text)}
           </div>
-        </div>
-      );
-    }
-
-    if (message.isLoader) {
-      return (
-        <div className="flex items-start space-x-2 mb-4">
-          <div className="flex-shrink-0">
-            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
-              <svg className="w-5 h-5 text-blue-500 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
+              )}
+              
+              {/* Timestamp - Only show for non-loading messages */}
+              {!message.isLoading && message.timestamp && (
+                <div className={`text-xs mt-2 ${
+                  isBot ? 'text-gray-500' : 'text-blue-100'
+                } ${isBot ? 'text-left' : 'text-right'}`}>
+                  {new Date(message.timestamp).toLocaleTimeString([], { 
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    hour12: true 
+                  })}
+              </div>
+              )}
             </div>
           </div>
-          <div className="flex-1">
-            <div className="bg-gray-100 rounded-lg p-3">
-              <p className="text-gray-700">{message.content}</p>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div
-        key={message.id}
-        className={`mb-4 ${message.isBot ? 'text-left' : 'text-right'}`}
-      >
-        <div
-          className={`inline-block p-3 rounded-lg ${
-            message.isBot
-              ? 'bg-gray-100 text-gray-800'
-              : 'bg-blue-600 text-white'
-          } max-w-[90%]`}
-        >
-          <div className="whitespace-pre-wrap font-sans">
-            {message.text}
-          </div>
-          {message.images && (
-            <div className="flex flex-wrap gap-4 mt-4">
-              {message.images.map((image, index) => (
-                <div key={index} className="w-full max-w-[300px]">
-                  <img
-                    src={image.url}
-                    alt={`Uploaded ${index + 1}`}
-                    className="w-full h-auto object-contain rounded-lg"
-                  />
-                  <p className="text-sm mt-2 text-gray-600">{image.name}</p>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
     );
@@ -872,23 +729,27 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 
   // Add a chat list toggle button to the chat header
   const renderChatHeader = () => (
-    <div className="p-3 border-b bg-white flex justify-between items-center">
-      <div className="flex items-center gap-2">
+    <div className="flex items-center justify-between p-4 border-b bg-white">
+      <div className="flex items-center">
         <button 
-          onClick={() => setShowChatList(!showChatList)} 
-          className="p-2 rounded hover:bg-gray-100"
-          title="Chat History"
+          onClick={() => setShowChatList(true)}
+          className="p-2 hover:bg-gray-100 rounded-full mr-2"
         >
-          <ListIcon className="w-5 h-5 text-gray-600" />
+          <ListIcon size={20} />
         </button>
-        <span className="font-medium">
-          {chatHistory[currentChatId]?.title || determineConversationTitle()}
-        </span>
+        <h2 className="text-lg font-medium">
+          {currentChatId ? `New Chat - ${currentChatId.replace('chat_', '')}` : 'New Chat'}
+        </h2>
       </div>
-      <div>
+      <div className="flex items-center gap-2">
         <span className="text-sm text-gray-500">
           {messages.length} messages
         </span>
+        <div>
+          <span className="text-sm text-gray-500">
+            {messages.length > 0 ? `Last updated: ${new Date(messages[messages.length - 1].timestamp).toLocaleString()}` : ''}
+        </span>
+        </div>
       </div>
     </div>
   );
@@ -959,7 +820,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
             onChange={(e) => setInputMessage(e.target.value)}
             placeholder="Type your message..."
             className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
-            disabled={isLoading || posterProcessing || isImageUploading || isPdfUploading}
+            disabled={isLoading || posterProcessing || isPdfUploading || isImageUploading}
           />
           <button
             type="submit"
@@ -1012,17 +873,51 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     }
   }, []);
 
+  // Add an effect to save editor content when chat ID changes or component unmounts
+  useEffect(() => {
+    // This function handles saving editor content when tab changes or component unmounts
+    const saveCurrentEditorContent = () => {
+      if (currentChatId && editorContent) {
+        // Save to the custom saveChatContent function
+        saveChatContent(currentChatId, editorContent, null);
+        
+        // Also update the complete chat history in localStorage
+        const updatedHistory = {
+          ...chatHistory,
+          [currentChatId]: {
+            ...chatHistory[currentChatId],
+            content: {
+              ...(chatHistory[currentChatId]?.content || {}),
+              editorContent: editorContent,
+              lastUpdated: new Date().toISOString()
+            },
+            lastUpdated: new Date().toISOString()
+          }
+        };
+        
+        try {
+          localStorage.setItem('documentGeneratorChats', JSON.stringify(updatedHistory));
+        } catch (error) {
+          console.error('Error saving editor content on unmount:', error);
+        }
+      }
+    };
+    
+    // Set up cleanup function to save content when unmounting or changing tabs
+    return saveCurrentEditorContent;
+  }, [currentChatId, editorContent, chatHistory]);
+
   // Update handleGenerateContent function
   const handleGenerateContent = async () => {
     setIsLoading(true);
     try {
       // Add loading message to chat
-      const loadingMessageId = Date.now();
+      const newLoadingMessageId = Date.now();
+      setLoadingMessageId(newLoadingMessageId);
       setMessages(prev => [...prev, {
-        id: loadingMessageId,
-        text: 'Generating document content...',
-        isBot: true,
-        isLoading: true
+        id: newLoadingMessageId,
+        text: 'Started Generating document content...',
+        isBot: true
       }]);
 
       // Check if all required fields are filled
@@ -1048,118 +943,224 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
         }
       });
 
-      const response = await fetch('http://localhost:8000/api/generate-content', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          type: documentData.type,
-          fields: fieldsToSend
-        }),
-      });
-
-      const data = await response.json();
-
-      // Remove loading message first
-      setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
-
-      if (!response.ok) {
-        // Handle HTTP errors
-        throw new Error(data.detail || 'Failed to generate content');
+      // Close existing WebSocket connection if any
+      if (ws && ws.readyState !== WebSocket.CLOSED) {
+        ws.close();
       }
 
-      if (data.error || data.detail) {
-        // Handle API errors
-        const errorMessage = data.detail || data.error || 'An error occurred while generating content';
+      // Create new WebSocket connection for content generation
+      const socket = new WebSocket('ws://localhost:8000/ws/generate-content');
+      
+      socket.onopen = () => {
+        console.log('WebSocket Connected for content generation');
+        // Send the document data
+        socket.send(JSON.stringify({
+          type: documentData.type,
+          fields: fieldsToSend
+        }));
+      };
+
+      let accumulatedContent = '';
+      let currentSection = '';
+
+      socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'error') {
+          // Remove loading message and show error
+          setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
+          setMessages(prev => [...prev, {
+            id: Date.now(),
+            text: `Error: ${data.error}`,
+            isBot: true,
+            isError: true
+          }]);
+          setIsLoading(false);
+          setLoadingMessageId(null);
+          return;
+        }
+
+        if (data.type === 'token') {
+          // Accumulate content
+          accumulatedContent += data.content;
+
+          // Update the last message with the current content
+          setMessages(prev => {
+            const messages = [...prev];
+            
+            // Remove any existing content messages and loading message
+            const filteredMessages = messages.filter(msg => !msg.isContent && msg.id !== loadingMessageId);
+            
+            // Format the content properly
+            let formattedContent = '';
+            try {
+              const parsedContent = JSON.parse(accumulatedContent);
+              if (parsedContent.sections) {
+                // Only get the content without section headers
+                formattedContent = Object.values(parsedContent.sections).join('\n\n');
+              } else {
+                formattedContent = accumulatedContent;
+              }
+            } catch (e) {
+              formattedContent = accumulatedContent;
+            }
+
+            // Add the content message
+            filteredMessages.push({
+              id: Date.now(),
+              text: formattedContent,
+              isBot: true,
+              isContent: true
+            });
+
+            // Add the loading message
+            filteredMessages.push({
+              id: loadingMessageId,
+              text: 'Generating document content...',
+              isBot: true,
+              isLoading: true
+            });
+            
+
+            return filteredMessages;
+          });
+        }
+
+        if (data.type === 'complete') {
+          // Process complete response
+          const content = data.content || '';
+          const pages = content.split('<div class="page-break"></div>');
+          setDocumentContent(pages);
+          setTotalPages(pages.length);
+
+
+          // Update editor content without changing cursor position
+          setEditorContent(content);
+
+          // Store the content in localStorage
+          // localStorage.setItem('documentEditorContent', content);
+          // localStorage.setItem('documentContent', JSON.stringify(pages));
+
+          // Also update the chatHistory with this content
+          const updatedHistory = {
+            ...chatHistory,
+            [currentChatId]: {
+              ...chatHistory[currentChatId],
+              content: {
+                editorContent: content,
+                previewContent: pages.join('<div class="page-break"></div>'),
+                lastUpdated: new Date().toISOString()
+              },
+              lastUpdated: new Date().toISOString()
+            }
+          };
+          setChatHistory(updatedHistory);
+          localStorage.setItem('documentGeneratorChats', JSON.stringify(updatedHistory));
+
+          // Remove loading message and show success message
+          setMessages(prev => {
+            const messages = [...prev];
+            
+            // Remove any existing content messages and loading message
+            const filteredMessages = messages.filter(msg => !msg.isContent && msg.id !== loadingMessageId);
+            
+            // Format the final content properly
+            let formattedContent = '';
+            if (data.sections) {
+              // Only get the content without section headers
+              formattedContent = Object.values(data.sections).join('\n\n');
+            } else {
+              formattedContent = content;
+            }
+
+            // Add the final content message
+            filteredMessages.push({
+              id: Date.now(),
+              text: formattedContent,
+              isBot: true,
+              isContent: true
+            });
+
+            // Add success message
+            filteredMessages.push({
+              id: Date.now() + 1,
+              text: "Document has been generated successfully!",
+              isBot: true
+            });
+
+            // Then ask about images
+            filteredMessages.push({
+              id: Date.now() + 2,
+              text: "Would you like to add event images to your document?",
+              isBot: true
+            });
+
+            // Add buttons for Yes/No
+            filteredMessages.push({
+              id: Date.now() + 3,
+              text: "",
+              isBot: true,
+              buttons: [
+                {
+                  text: "Yes, add images",
+                  action: "addImages"
+                },
+                {
+                  text: "No, continue without images",
+                  action: "skipImages"
+                }
+              ]
+            });
+
+            // Save the content for this chat
+            saveChatContent(currentChatId, content, data);
+
+            return filteredMessages;
+          });
+
+          // Store the complete response for preview
+          setPreviewContent(data);
+          // localStorage.setItem('previewContent', JSON.stringify(data));
+          setWordCount(data.word_count);
+
+          // Reset currentField to indicate all required fields are collected
+          setDocumentData(prev => ({
+            ...prev,
+            currentField: null
+          }));
+
+          // Clear loading state
+          setIsLoading(false);
+          setLoadingMessageId(null);
+        }
+      };
+
+      socket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
         setMessages(prev => [...prev, {
           id: Date.now(),
-          text: `Error: ${errorMessage}`,
+          text: 'Error connecting to server. Please try again.',
           isBot: true,
           isError: true
         }]);
-        return;
-      }
+        setIsLoading(false);
+        setLoadingMessageId(null);
+      };
 
-      // Process content into pages
-      const content = data.content || '';
-      const pages = content.split('<div class="page-break"></div>');
-      setDocumentContent(pages);
-      setTotalPages(pages.length);
+      socket.onclose = () => {
+        console.log('WebSocket connection closed');
+        setIsLoading(false);
+        setLoadingMessageId(null);
+      };
 
-      // Update editor content without changing cursor position
-      setEditorContent(content);
-
-      // Store the content in localStorage
-      localStorage.setItem('documentEditorContent', content);
-      localStorage.setItem('documentContent', JSON.stringify(pages));
-
-      // First show a success message
-      setMessages(prev => [...prev, {
-        id: Date.now(),
-        text: "Document has been generated successfully!",
-        isBot: true
-      }]);
-      
-      // Display sections if available
-      if (data.sections) {
-        // Add a message indicating that sections follow
-        setMessages(prev => [...prev, {
-          id: Date.now() + 1,
-          text: "Here are the document sections:",
-          isBot: true
-        }]);
-        
-        // Add each section as a separate message
-        Object.entries(data.sections).forEach(([section, content], index) => {
-          setMessages(prev => [...prev, {
-            id: Date.now() + index + 2,
-            text: `**${section}**\n\n${content}`,
-            isBot: true,
-            isContent: true
-          }]);
-        });
-      }
-      
-      // Then ask about images
-      setMessages(prev => [...prev, {
-        id: Date.now() + 100,
-        text: "Would you like to add event images to your document?",
-        isBot: true
-      }]);
-
-      // Add buttons for Yes/No
-      setMessages(prev => [...prev, {
-        id: Date.now() + 101,
-        text: "",
-        isBot: true,
-        buttons: [
-          {
-            text: "Yes, add images",
-            action: "addImages"
-          },
-          {
-            text: "No, continue without images",
-            action: "skipImages"
-          }
-        ]
-      }]);
-
-      // Store the complete response for preview
-      setPreviewContent(data);
-      localStorage.setItem('previewContent', JSON.stringify(data));
-      setWordCount(data.word_count);
-
-      // Reset currentField to indicate all required fields are collected
-      setDocumentData(prev => ({
-        ...prev,
-        currentField: null
-      }));
+      // Store the WebSocket instance
+      setWs(socket);
 
     } catch (error) {
       console.error('Error:', error);
       // Remove any existing loading message
-      setMessages(prev => prev.filter(msg => !msg.isLoading));
+      setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
       
       // Add error message with proper formatting
       setMessages(prev => [...prev, {
@@ -1170,6 +1171,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       }]);
     } finally {
       setIsLoading(false);
+      setLoadingMessageId(null);
     }
   };
 
@@ -1203,44 +1205,54 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
             setDocumentData(recentChat.documentData);
           }
 
-          // Load saved editor content
-          const savedEditorContent = localStorage.getItem('documentEditorContent');
-          if (savedEditorContent) {
-            setEditorContent(savedEditorContent);
-          }
-
-          // Load saved document content
-          const savedDocumentContent = localStorage.getItem('documentContent');
-          if (savedDocumentContent) {
-            const parsedContent = JSON.parse(savedDocumentContent);
-            setDocumentContent(parsedContent);
-            setTotalPages(parsedContent.length);
-          }
-
-          // Load saved preview content
-          const savedPreviewContent = localStorage.getItem('previewContent');
-          if (savedPreviewContent) {
-            setPreviewContent(JSON.parse(savedPreviewContent));
+          // Load saved content if available - ensure we check for content properly
+          if (recentChat.content) {
+            console.log("Loading editor content from saved chat:", recentChat.content);
+            setEditorContent(recentChat.content.editorContent || '');
+            
+            // Handle preview content
+            if (recentChat.content.previewContent) {
+              let previewPages = [];
+              
+              if (typeof recentChat.content.previewContent === 'string') {
+                previewPages = recentChat.content.previewContent.split('<div class="page-break"></div>');
+              } else if (recentChat.content.previewContent.content) {
+                previewPages = recentChat.content.previewContent.content.split('<div class="page-break"></div>');
+              } else if (Array.isArray(recentChat.content.previewContent)) {
+                previewPages = recentChat.content.previewContent;
+              }
+              
+              setPreviewContent(recentChat.content.previewContent);
+              setDocumentContent(previewPages.length > 0 ? previewPages : ['']);
+              setTotalPages(previewPages.length > 0 ? previewPages.length : 1);
+              setCurrentPage(1);
+            }
           }
         }
       } catch (e) {
         console.error('Error parsing saved chats:', e);
       }
     }
+    // Note: We don't automatically create a new chat here anymore
   }, []);
 
-  // Add new useEffect to save content when it changes
+  // Only keep one useEffect to save content when it changes
   useEffect(() => {
-    if (editorContent) {
-      localStorage.setItem('documentEditorContent', editorContent);
+    if (currentChatId && (editorContent || documentContent.length > 0)) {
+      const chatData = JSON.parse(localStorage.getItem('documentGeneratorChats')) || {};
+      if (chatData[currentChatId]) {
+        chatData[currentChatId] = {
+          ...chatData[currentChatId],
+          content: {
+            editorContent: editorContent || chatData[currentChatId].content?.editorContent || '',
+            previewContent: documentContent.length > 0 ? documentContent.join('<div class="page-break"></div>') : chatData[currentChatId].content?.previewContent || null,
+            lastUpdated: new Date().toISOString()
+          }
+        };
+        localStorage.setItem('documentGeneratorChats', JSON.stringify(chatData));
+      }
     }
-    if (documentContent.length > 0) {
-      localStorage.setItem('documentContent', JSON.stringify(documentContent));
-    }
-    if (previewContent) {
-      localStorage.setItem('previewContent', JSON.stringify(previewContent));
-    }
-  }, [editorContent, documentContent, previewContent]);
+  }, [editorContent, documentContent, currentChatId]);
 
   // Add pagination controls to the editor section
   const renderPagination = () => {
@@ -1275,11 +1287,17 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     const message = inputMessage.trim();
     if (!message) return;
 
+    // Save current editor content when sending a message
+    if (currentChatId && editorContent) {
+      saveChatContent(currentChatId, editorContent, null);
+    }
+
     // Clear input
     setInputMessage('');
 
     // Check for clear command
     if (message.toLowerCase() === 'clear') {
+      clearChat();
       clearChat();
       return;
     }
@@ -1485,8 +1503,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 9. Master Time Table
 10. Coaching Class Time Table
 11. Guest Lecture
-
-Or, if you have an existing PDF report, click the "Upload PDF" button below to extract and edit its content.`,
+`,
       isBot: true,
     }]);
 
@@ -1513,6 +1530,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     setUploadedImages([]);
     setPreviewImages([]);
     
+    window.location.reload();
     // Reset format
     setSelectedFormat(prev => ({
       ...prev,
@@ -1569,20 +1587,173 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     handleEditorChange();
   };
 
-  const generatePDF = () => {
+  const generatePDF = async () => {
     if (editorRef.current) {
-      const content = editorRef.current.getEditor().root.innerHTML;
-      const element = document.createElement('div');
-      element.innerHTML = content;
-      
-      const doc = new jsPDF();
-      doc.html(element, {
-        callback: function(doc) {
-          doc.save('document.pdf');
-        },
-        x: 10,
-        y: 10
-      });
+      try {
+        // Create a temporary container
+        const container = document.createElement('div');
+        
+        // Set container styles
+        container.style.width = '794px'; // A4 width in pixels
+        container.style.margin = '0';
+        container.style.padding = '40px';
+        container.style.backgroundColor = 'white';
+        container.style.display = 'block';
+        container.style.position = 'fixed';
+        container.style.top = '0';
+        container.style.left = '0';
+        container.style.zIndex = '-9999';
+        
+        // Add content to container
+        container.innerHTML = `
+          <div style="font-family: Arial, sans-serif;">
+            <!-- Header -->
+            <div style="text-align: center; margin-bottom: 20px;">
+              <img 
+                src="${logoUrl}"
+                alt="FXEC Logo" 
+                style="height: 50px; margin-bottom: 8px;"
+              />
+              <h1 style="font-size: 16px; font-weight: bold; text-transform: uppercase; margin: 8px 0;">
+                ${documentData.type || 'GUEST LECTURE REPORT'}
+              </h1>
+              <div style="width: 100px; height: 2px; background-color: #2563eb; margin: 8px auto;"></div>
+            </div>
+
+            <!-- Details Table -->
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+              <tr>
+                <td style="padding: 4px 0;">
+                  <span style="font-weight: 600;">Topic:</span>
+                  <span style="margin-left: 5px;">${documentData.fields?.Topic || ''}</span>
+                </td>
+                <td style="padding: 4px 0; text-align: right;">
+                  <span style="font-weight: 600;">Event Date:</span>
+                  <span style="margin-left: 5px;">${documentData.fields?.['Event Date'] || ''}</span>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 4px 0;">
+                  <span style="font-weight: 600;">Guest Name:</span>
+                  <span style="margin-left: 5px;">${documentData.fields?.['Guest Name'] || ''}</span>
+                </td>
+                <td style="padding: 4px 0; text-align: right;">
+                  <span style="font-weight: 600;">Activity Code:</span>
+                  <span style="margin-left: 5px;">${documentData.fields?.['Activity Code'] || ''}</span>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 4px 0;">
+                  <span style="font-weight: 600;">Designation:</span>
+                  <span style="margin-left: 5px;">${documentData.fields?.['Guest Designation'] || ''}</span>
+                </td>
+                <td style="padding: 4px 0; text-align: right;">
+                  <span style="font-weight: 600;">Coordinator:</span>
+                  <span style="margin-left: 5px;">${documentData.fields?.['Organizer Faculty Name'] || ''}</span>
+                </td>
+              </tr>
+            </table>
+
+            <div style="border-top: 1px solid #d1d5db; margin: 20px 0;"></div>
+
+            <!-- Main Content -->
+            <div style="font-size: ${selectedFormat.fontSize}; line-height: 1.6; text-align: justify;">
+              ${editorRef.current.getEditor().root.innerHTML}
+            </div>
+
+            <!-- Signature -->
+            <div style="margin-top: 30px; text-align: right;">
+              <div style="display: inline-block; text-align: center;">
+                <div style="margin-bottom: 25px;">____________________</div>
+                <div style="font-weight: bold;">Signature</div>
+                <div>Head of Department</div>
+              </div>
+            </div>
+          </div>
+        `;
+
+        // Add container to document body temporarily
+        document.body.appendChild(container);
+
+        // Wait for images to load
+        await new Promise((resolve) => {
+          const images = container.getElementsByTagName('img');
+          let loadedImages = 0;
+          const totalImages = images.length;
+
+          if (totalImages === 0) resolve();
+
+          Array.from(images).forEach(img => {
+            if (img.complete) {
+              loadedImages++;
+              if (loadedImages === totalImages) resolve();
+            } else {
+              img.onload = () => {
+                loadedImages++;
+                if (loadedImages === totalImages) resolve();
+              };
+              img.onerror = () => {
+                loadedImages++;
+                if (loadedImages === totalImages) resolve();
+              };
+            }
+          });
+
+          // Fallback timeout
+          setTimeout(resolve, 1000);
+        });
+
+        // Get the actual height of the content
+        const contentHeight = container.offsetHeight;
+        
+        // Create PDF with custom dimensions
+        const pdf = new jsPDF({
+          unit: 'px',
+          format: [794, Math.max(1123, contentHeight + 80)], // minimum A4 height or content height
+          orientation: 'portrait'
+        });
+
+        // Convert HTML to canvas with proper dimensions
+        const canvas = await html2canvas(container, {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          scrollY: 0,
+          height: contentHeight,
+          windowHeight: contentHeight,
+          width: 794,
+          windowWidth: 794,
+          logging: false,
+          onclone: (clonedDoc) => {
+            const clonedContainer = clonedDoc.querySelector('div');
+            if (clonedContainer) {
+              clonedContainer.style.visibility = 'visible';
+            }
+          }
+        });
+
+        // Add the canvas to PDF with proper scaling
+        const imgData = canvas.toDataURL('image/jpeg', 1.0);
+        pdf.addImage(imgData, 'JPEG', 0, 0, 794, contentHeight);
+
+        // Save the PDF
+        pdf.save(`${documentData.type || 'document'}.pdf`);
+
+        // Cleanup
+        document.body.removeChild(container);
+
+      } catch (error) {
+        console.error('PDF Generation Error:', error);
+        setMessages(prev => [
+          ...prev,
+          {
+            id: Date.now(),
+            text: 'Error generating PDF. Please try again.',
+            isBot: true,
+            isError: true
+          }
+        ]);
+      }
     }
   };
 
@@ -1752,9 +1923,12 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
           {isPreview ? (
             <div 
               className="min-h-[500px] prose max-w-none"
-              style={{ fontFamily: `${selectedFormat.fontFamily}, sans-serif` }}
+              style={{ 
+                fontFamily: `${selectedFormat.fontFamily}, sans-serif`,
+                fontSize: selectedFormat.fontSize
+              }}
               dangerouslySetInnerHTML={{ 
-                __html: DOMPurify.sanitize(content || '')
+                __html: DOMPurify.sanitize(previewContent || content || '')
               }} 
             />
           ) : (
@@ -1924,17 +2098,24 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
         </div>
 
         <div className="flex items-center space-x-2">
-          {isEditing && (
             <button
-              onClick={handleSaveDocument}
-              className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2 text-sm font-medium shadow-sm"
-            >
-              <Save className="w-4 h-4" />
-              <span>Save Changes</span>
-            </button>
-          )}
-          <button
-            onClick={() => setIsEditing(!isEditing)}
+            onClick={() => {
+              if (isEditing) {
+                // Switching to preview mode
+                // First get the current content from the editor
+                if (editorRef.current && editorRef.current.getEditor) {
+                  const editor = editorRef.current.getEditor();
+                  if (editor && editor.root) {
+                    const latestContent = editor.root.innerHTML;
+                    // Update content state directly before toggling view
+                    setEditorContent(latestContent);
+                    setPreviewContent(latestContent);
+                  }
+                }
+              }
+              // Toggle editing mode
+              setIsEditing(!isEditing);
+            }}
             className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm font-medium shadow-sm"
           >
             {isEditing ? (
@@ -1955,6 +2136,13 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
           >
             <Download className="w-4 h-4" />
             <span>Export PDF</span>
+          </button>
+          <button
+            onClick={generateDOCX}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 text-sm font-medium shadow-sm"
+          >
+            <FileText className="w-4 h-4" />
+            <span>Export DOCX</span>
           </button>
         </div>
       </div>
@@ -2281,52 +2469,172 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
   };
 
   // Add function to handle saving document changes
-  const handleSaveDocument = () => {
-    if (!editorRef.current) return;
-    
-    // Get current editor content
-    const editor = editorRef.current.getEditor();
-    const htmlContent = editor.root.innerHTML;
-    
-    // Update document content state
-    setEditorContent(htmlContent);
-    
-    // Save images properly by processing them to be visible in preview mode
-    const images = Array.from(editor.root.querySelectorAll('img'));
-    
-    // Create a properly formatted page for preview
-    const formattedContent = processContentForPreview(htmlContent, images);
-    setDocumentContent([formattedContent]);
-    
-    // Show success message
-    setMessages(prev => [...prev, {
-      id: Date.now(),
-      text: "Document changes saved successfully!",
-      isBot: true
-    }]);
+  const handleSaveDocument = async () => {
+    try {
+      console.log('Saving document...', editorRef.current);
+      
+      // Get current editor content - start with React state
+      let currentEditorContent = editorContent || '';
+      
+      // First, check if we already have content in state
+      if (currentEditorContent && currentEditorContent.trim()) {
+        console.log('Using content from React state:', currentEditorContent.substring(0, 100) + '...');
+      } 
+      // Then try getting it from the editor ref
+      else if (editorRef.current) {
+        console.log('Editor ref exists:', editorRef.current);
+        
+        // Check if getContent method exists
+        if (typeof editorRef.current.getContent === 'function') {
+          console.log('Using getContent method');
+          currentEditorContent = editorRef.current.getContent();
+        } 
+        // Fall back to getEditor
+        else if (editorRef.current.getEditor) {
+          console.log('Using getEditor method');
+          const editor = editorRef.current.getEditor();
+          console.log('Editor object:', editor);
+          
+          if (editor && editor.root) {
+            console.log('Accessing editor.root.innerHTML');
+            currentEditorContent = editor.root.innerHTML;
+          } else if (editor) {
+            // Try other methods to get content
+            console.log('Trying other methods to get content');
+            try {
+              // Try using getText and converting to HTML
+              const text = editor.getText();
+              currentEditorContent = `<p>${text}</p>`;
+              console.log('Using editor.getText():', text);
+            } catch (err) {
+              console.error('Error getting text from editor:', err);
+            }
+          }
+        }
+      }
+      
+      // If we still don't have content, try getting it directly from the DOM
+      if (!currentEditorContent) {
+        console.log('Attempting to get content from DOM');
+        const editorElement = document.querySelector('.ql-editor');
+        if (editorElement) {
+          currentEditorContent = editorElement.innerHTML;
+          console.log('Content from DOM:', currentEditorContent.substring(0, 100) + '...');
+        }
+      }
+      
+      // Final fallback - use the current state value
+      if (!currentEditorContent) {
+        console.log('Using current state as fallback');
+        currentEditorContent = currentEditorContent || '';
+      }
+      
+      console.log('Final editor content length:', currentEditorContent.length);
+      
+      if (!currentEditorContent) {
+        console.warn("Could not retrieve editor content");
+        // Still continue with empty content instead of throwing
+        currentEditorContent = '';
+      }
+      
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = currentEditorContent;
+      const images = tempDiv.getElementsByTagName('img');
+      console.log('Found images:', images.length);
+      
+      // Process content for preview - ensure images is properly handled
+      console.log('Processing content for preview');
+      const previewContent = processContentForPreview(currentEditorContent, images);
+      
+      // Save chat content
+      console.log('Saving chat content for chat ID:', currentChatId);
+      await saveChatContent(currentChatId, currentEditorContent, previewContent);
+      
+      // Update chat history with the latest content
+      console.log('Updating chat history in localStorage');
+      const existingHistory = JSON.parse(localStorage.getItem('documentGeneratorChats') || '{}');
+      
+      // Make sure the chat exists in history
+      if (!existingHistory[currentChatId]) {
+        console.log('Chat ID not found in history, creating new entry');
+        existingHistory[currentChatId] = {
+          id: currentChatId,
+          messages: messages,
+          lastUpdated: new Date().toISOString(),
+          title: determineConversationTitle()
+        };
+      }
+      
+      const updatedHistory = {
+        ...existingHistory,
+        [currentChatId]: {
+          ...existingHistory[currentChatId],
+          content: {
+            editorContent: currentEditorContent,
+            previewContent,
+            lastUpdated: new Date().toISOString()
+          }
+        }
+      };
+      
+      localStorage.setItem('documentGeneratorChats', JSON.stringify(updatedHistory));
+      setChatHistory(updatedHistory);
+      
+      // Update the editor content state
+      setEditorContent(currentEditorContent);
+      
+      // Reset unsaved changes flag
+      setHasUnsavedChanges(false);
+      
+      // Show success message
+      setMessages(prev => [
+        ...prev,
+        {
+          id: Date.now(),
+          text: 'Document saved successfully!',
+          isBot: true,
+          isSuccess: true
+        }
+      ]);
+    } catch (error) {
+      console.error('Error saving document:', error);
+      // Create a detailed error message
+      const errorDetails = error.message || 'Unknown error';
+      setMessages(prev => [
+        ...prev,
+        {
+          id: Date.now(),
+          text: `Error saving document: ${errorDetails}. Please try again.`,
+          isBot: true,
+          isError: true
+        }
+      ]);
+    }
   };
 
   // Add function to process content for preview to ensure images display correctly
   const processContentForPreview = (htmlContent, images) => {
     let processedContent = htmlContent;
     
-    // Ensure images have proper styles and max-width for preview
-    images.forEach((img, index) => {
-      const imgSrc = img.getAttribute('src');
-      if (imgSrc) {
-        // Give each image a unique ID to track it
-        const imgId = `doc-img-${index}-${Date.now()}`;
-        img.setAttribute('id', imgId);
+    // Process images to ensure they are properly displayed in preview
+    images.forEach(img => {
+      const src = img.getAttribute('src');
+      if (src && src.startsWith('data:')) {
+        // Store base64 images in localStorage
+        const imageKey = `img_${currentChatId}_${Date.now()}`;
+        localStorage.setItem(imageKey, src);
         
-        // Add styles for better presentation in preview
-        img.style.maxWidth = '100%';
-        img.style.height = 'auto';
-        img.style.borderRadius = '8px';
-        img.style.margin = '1rem 0';
-        img.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)';
+        // Replace data URL with reference
+        processedContent = processedContent.replace(src, `local://${imageKey}`);
       }
     });
     
+    // Clean up any unnecessary formatting
+    processedContent = processedContent
+      .replace(/<p><br><\/p>/g, '<br>')
+      .replace(/\s+/g, ' ')
+      .trim();
+      
     return processedContent;
   };
 
@@ -2334,23 +2642,66 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
   useEffect(() => {
     // When changing from edit mode to preview mode
     if (!isEditing && editorRef.current) {
+      try {
+        console.log('Auto-saving document when switching to preview mode');
+        
+        // Get current editor content directly before saving
+        let currentContent = '';
+        if (editorRef.current && editorRef.current.getEditor) {
+          const editor = editorRef.current.getEditor();
+          if (editor && editor.root) {
+            currentContent = editor.root.innerHTML;
+          }
+        }
+        
+        // If we got content, use it to update the state
+        if (currentContent) {
+          console.log('Setting preview content to match current editor content');
+          setEditorContent(currentContent);
+          
+          // Also update preview content
+          setPreviewContent(currentContent);
+        }
+        
+        // Then save the document (will use our updated content)
       handleSaveDocument();
+      } catch (error) {
+        console.error('Error auto-saving document:', error);
+        // Show error message but don't prevent switching to preview
+        setMessages(prev => [
+          ...prev,
+          {
+            id: Date.now(),
+            text: 'Error auto-saving document. You can continue to preview, but your changes may not be saved.',
+            isBot: true,
+            isError: true
+          }
+        ]);
+      }
     }
   }, [isEditing]);
 
-  // Add new state variables for chat management
-  const [chatHistory, setChatHistory] = useState({});
-  const [currentChatId, setCurrentChatId] = useState(null);
-  const [showChatList, setShowChatList] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [chatToDelete, setChatToDelete] = useState(null);
-  const [notification, setNotification] = useState({ type: '', message: '' });
-  const [showNotification, setShowNotification] = useState(false);
-  
   // Function to create a new chat
   const createNewChat = () => {
-    // Create a new chat ID
-    const newChatId = `chat_${Date.now()}`;
+    // Save current editor content before creating new chat
+    if (currentChatId && editorContent) {
+      saveChatContent(currentChatId, editorContent, null);
+    }
+    
+    // Generate a unique 6-digit ID
+    const generateUniqueId = () => {
+      const min = 100000;
+      const max = 999999;
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    };
+    
+    // Ensure ID is unique
+    let newId;
+    do {
+      newId = generateUniqueId();
+    } while (chatHistory[`chat_${newId}`]);
+    
+    const newChatId = `chat_${newId}`;
     
     // Reset all data
     setMessages([{
@@ -2369,7 +2720,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 10. Coaching Class Time Table
 11. Guest Lecture
 
-Or, if you have an existing PDF report, click the "Upload PDF" button below to extract and edit its content.`,
+`,
       isBot: true,
     }]);
     
@@ -2379,8 +2730,12 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       fields: {}
     });
     
+    // Clear editor content for new chat
     setEditorContent('');
     setDocumentContent([]);
+    
+    // Reset unsaved changes flag for new chat
+    setHasUnsavedChanges(false);
     
     // Set as current chat
     setCurrentChatId(newChatId);
@@ -2408,7 +2763,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 10. Coaching Class Time Table
 11. Guest Lecture
 
-Or, if you have an existing PDF report, click the "Upload PDF" button below to extract and edit its content.`,
+`,
         isBot: true,
       }],
       lastUpdated: new Date().toISOString(),
@@ -2417,6 +2772,11 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
         type: null,
         currentField: null,
         fields: {}
+      },
+      content: {
+        editorContent: '',
+        previewContent: null,
+        lastUpdated: new Date().toISOString()
       }
     };
     
@@ -2467,24 +2827,28 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
             setDocumentData(recentChat.documentData);
           }
 
-          // Load saved editor content
-          const savedEditorContent = localStorage.getItem('documentEditorContent');
-          if (savedEditorContent) {
-            setEditorContent(savedEditorContent);
-          }
-
-          // Load saved document content
-          const savedDocumentContent = localStorage.getItem('documentContent');
-          if (savedDocumentContent) {
-            const parsedContent = JSON.parse(savedDocumentContent);
-            setDocumentContent(parsedContent);
-            setTotalPages(parsedContent.length);
-          }
-
-          // Load saved preview content
-          const savedPreviewContent = localStorage.getItem('previewContent');
-          if (savedPreviewContent) {
-            setPreviewContent(JSON.parse(savedPreviewContent));
+          // Load saved content if available - ensure we check for content properly
+          if (recentChat.content) {
+            console.log("Loading editor content from saved chat:", recentChat.content);
+            setEditorContent(recentChat.content.editorContent || '');
+            
+            // Handle preview content
+            if (recentChat.content.previewContent) {
+              let previewPages = [];
+              
+              if (typeof recentChat.content.previewContent === 'string') {
+                previewPages = recentChat.content.previewContent.split('<div class="page-break"></div>');
+              } else if (recentChat.content.previewContent.content) {
+                previewPages = recentChat.content.previewContent.content.split('<div class="page-break"></div>');
+              } else if (Array.isArray(recentChat.content.previewContent)) {
+                previewPages = recentChat.content.previewContent;
+              }
+              
+              setPreviewContent(recentChat.content.previewContent);
+              setDocumentContent(previewPages.length > 0 ? previewPages : ['']);
+              setTotalPages(previewPages.length > 0 ? previewPages.length : 1);
+              setCurrentPage(1);
+            }
           }
         }
       } catch (e) {
@@ -2507,7 +2871,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
   // Save chat history whenever messages change
   useEffect(() => {
     if (currentChatId && messages.length > 0) {
-      // Update the chat history with current messages
+      // Update the chat history with current messages and content
       const updatedHistory = {
         ...chatHistory,
         [currentChatId]: {
@@ -2515,7 +2879,13 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
           messages: messages,
           lastUpdated: new Date().toISOString(),
           title: determineConversationTitle(),
-          documentData: documentData
+          documentData: documentData,
+          content: {
+            editorContent: editorContent || chatHistory[currentChatId]?.content?.editorContent || '',
+            previewContent: documentContent.length > 0 ? documentContent.join('<div class="page-break"></div>') : 
+                            chatHistory[currentChatId]?.content?.previewContent || null,
+            lastUpdated: new Date().toISOString()
+          }
         }
       };
       
@@ -2528,7 +2898,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
         console.error('Error saving chat history:', e);
       }
     }
-  }, [messages, documentData]);
+  }, [messages, documentData, editorContent, documentContent]);
   
   // Function to determine a title for the conversation based on content
   const determineConversationTitle = () => {
@@ -2548,13 +2918,66 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
   
   // Function to load a previous chat
   const loadChat = (chatId) => {
+    // Save current editor content before switching
+    if (currentChatId && editorContent) {
+      // Save to the content sub-object in chat history
+      const updatedHistory = {
+        ...chatHistory,
+        [currentChatId]: {
+          ...chatHistory[currentChatId],
+          content: {
+            ...(chatHistory[currentChatId]?.content || {}),
+            editorContent: editorContent,
+            lastUpdated: new Date().toISOString()
+          },
+          lastUpdated: new Date().toISOString()
+        }
+      };
+      
+      setChatHistory(updatedHistory);
+      localStorage.setItem('documentGeneratorChats', JSON.stringify(updatedHistory));
+    }
+
     if (chatHistory[chatId]) {
-      // Load messages
+      // Load messages and document data
       setMessages(chatHistory[chatId].messages);
       
-      // Load document data if available
       if (chatHistory[chatId].documentData) {
         setDocumentData(chatHistory[chatId].documentData);
+      }
+      
+      // Load editor content directly from chat history
+      const editorContentToLoad = chatHistory[chatId]?.content?.editorContent || '';
+      console.log('Loading editor content for chat:', chatId, editorContentToLoad);
+      setEditorContent(editorContentToLoad);
+      
+      // Reset unsaved changes flag when loading a chat
+      setHasUnsavedChanges(false);
+      
+      // Load preview content if available
+      const previewContentToLoad = chatHistory[chatId]?.content?.previewContent;
+      
+      if (previewContentToLoad) {
+        setPreviewContent(previewContentToLoad);
+        let previewPages = [];
+        
+        if (typeof previewContentToLoad === 'string') {
+          previewPages = previewContentToLoad.split('<div class="page-break"></div>');
+        } else if (previewContentToLoad.content) {
+          previewPages = previewContentToLoad.content.split('<div class="page-break"></div>');
+        } else if (Array.isArray(previewContentToLoad)) {
+          previewPages = previewContentToLoad;
+        }
+        
+        setDocumentContent(previewPages.length > 0 ? previewPages : ['']);
+        setTotalPages(previewPages.length > 0 ? previewPages.length : 1);
+        setCurrentPage(1);
+      } else {
+        // Reset preview content if none exists for this chat
+        setPreviewContent(null);
+        setDocumentContent(['']);
+        setTotalPages(1);
+        setCurrentPage(1);
       }
       
       // Set as current chat
@@ -2622,11 +3045,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       message: 'Chat deleted successfully'
     });
     setShowNotification(true);
-    
-    // Hide notification after 3 seconds
-    setTimeout(() => {
-      setShowNotification(false);
-    }, 3000);
+    setTimeout(() => setShowNotification(false), 3000);
   };
   
   // Function to confirm chat deletion
@@ -2729,30 +3148,39 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 
   // Render the chat list
   const renderChatList = () => {
-    // Convert chat history object to array and sort by last updated time
-    const chats = Object.values(chatHistory).sort((a, b) => 
-      new Date(b.lastUpdated) - new Date(a.lastUpdated)
-    );
+    const sortedChats = Object.entries(chatHistory)
+      .sort(([, a], [, b]) => new Date(b.lastUpdated) - new Date(a.lastUpdated))
+      .map(([id, chat]) => ({ id, ...chat }));
     
     return (
-      <div className="absolute left-0 top-0 w-64 h-full bg-white border-r shadow-lg z-50 overflow-y-auto">
-        <div className="p-3 border-b flex justify-between items-center bg-blue-600 text-white">
-          <h3 className="font-semibold">Conversations</h3>
-          <button onClick={() => setShowChatList(false)} className="p-1 hover:bg-blue-700 rounded">
-            <X className="w-4 h-4" />
+      <div className="fixed left-0 top-0 w-80 h-screen bg-white shadow-lg z-50 flex flex-col">
+        <div className="flex items-center justify-between p-4 border-b">
+          <h2 className="text-lg font-semibold">Conversations</h2>
+          <button
+            onClick={() => setShowChatList(false)}
+            className="p-1 hover:bg-gray-100 rounded-full"
+          >
+            <X size={20} />
           </button>
         </div>
         
         <div className="p-2">
           <button 
             onClick={createNewChat}
-            className="w-full p-2 mb-3 bg-blue-600 text-white rounded flex items-center justify-center gap-2 hover:bg-blue-700"
+            className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors mb-2"
           >
-            <MessageSquare className="w-4 h-4" />
+            <MessageSquare size={16} />
             <span>New Chat</span>
           </button>
           
-          <div className="flex justify-between mb-3">
+          <div className="flex gap-2 mb-2">
+            <button
+              onClick={() => document.getElementById('import-chat').click()}
+              className="flex-1 py-2 px-3 bg-gray-100 text-sm text-gray-700 rounded hover:bg-gray-200 transition-colors flex items-center justify-center gap-1"
+            >
+              <Upload size={14} />
+              Import
+            </button>
             <input 
               type="file" 
               id="import-chat" 
@@ -2760,55 +3188,55 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
               onChange={importChatFromJson} 
               className="hidden" 
             />
-            <label 
-              htmlFor="import-chat" 
-              className="p-2 bg-gray-200 rounded text-xs cursor-pointer hover:bg-gray-300 flex-1 text-center mr-1"
-            >
-              Import Chat
-            </label>
-            
             <button 
               onClick={() => exportChatAsJson(currentChatId)}
-              className="p-2 bg-gray-200 rounded text-xs hover:bg-gray-300 flex-1 ml-1"
-              disabled={!currentChatId || !chatHistory[currentChatId]}
+              className="flex-1 py-2 px-3 bg-gray-100 text-sm text-gray-700 rounded hover:bg-gray-200 transition-colors flex items-center justify-center gap-1"
             >
-              Export Current
+              <Download size={14} />
+              Export
             </button>
           </div>
         </div>
         
-        <div className="chat-list">
-          {chats.length === 0 ? (
-            <div className="p-3 text-center text-gray-500 text-sm">
-              No saved conversations
-            </div>
-          ) : (
-            chats.map(chat => (
+        <div className="flex-1 overflow-y-auto">
+          {sortedChats.map((chat) => {
+            const displayId = chat.id.replace('chat_', '');
+            const chatTitle = `New Chat - ${displayId}`;
+
+            return (
               <div 
                 key={chat.id} 
-                className={`p-3 border-b cursor-pointer hover:bg-gray-100 flex justify-between items-center ${
-                  chat.id === currentChatId ? 'bg-blue-50 border-l-4 border-l-blue-600' : ''
-                }`}
                 onClick={() => loadChat(chat.id)}
+                className={`p-3 border-b cursor-pointer hover:bg-gray-50 transition-colors ${
+                  currentChatId === chat.id ? 'bg-blue-50' : ''
+                }`}
               >
-                <div className="flex-1 truncate pr-2">
-                  <div className="font-medium text-sm">{chat.title || 'Untitled Chat'}</div>
-                  <div className="text-xs text-gray-500">
-                    {new Date(chat.lastUpdated).toLocaleString()}
-                  </div>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="font-medium text-sm truncate flex-1">
+                    {chatTitle}
                 </div>
                 <button 
                   onClick={(e) => {
                     e.stopPropagation();
                     confirmDeleteChat(chat.id);
                   }}
-                  className="p-1 text-gray-500 hover:text-red-500 hover:bg-gray-200 rounded"
+                    className="p-1 hover:bg-gray-200 rounded-full"
                 >
-                  <X className="w-4 h-4" />
+                    <X size={14} />
                 </button>
               </div>
-            ))
-          )}
+                <div className="text-xs text-gray-500">
+                  {new Date(chat.lastUpdated).toLocaleString([], {
+                    month: 'numeric',
+                    day: 'numeric',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     );
@@ -2816,80 +3244,50 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
 
   // Add a new function to render chat tabs at the top
   const renderChatTabs = () => {
-    // Convert chat history object to array and sort by last updated time
-    const chats = Object.values(chatHistory).sort((a, b) => 
-      new Date(b.lastUpdated) - new Date(a.lastUpdated)
-    );
+    const sortedChats = Object.entries(chatHistory)
+      .sort(([, a], [, b]) => new Date(b.lastUpdated) - new Date(a.lastUpdated))
+      .map(([id, chat]) => ({ id, ...chat }));
     
     return (
-      <div className="bg-white border-b shadow-sm">
-        <div className="flex items-center px-4 overflow-x-auto">
-          {/* New Chat Tab - Always First */}
+      <div className="flex overflow-x-auto border-b bg-gray-50">
+        {/* New Chat Button - Always First */}
           <div 
             onClick={createNewChat}
-            className="flex items-center px-4 py-2 mx-1 rounded-t-lg cursor-pointer transition-colors bg-blue-600 text-white hover:bg-blue-700"
+          className="flex items-center gap-2 px-4 py-2 cursor-pointer bg-blue-600 text-white hover:bg-blue-700 transition-colors border-r"
           >
-            <MessageSquare className="w-4 h-4 mr-2" />
-            <span className="text-sm font-medium">New Chat</span>
+          <MessageSquare size={16} />
+          <span className="text-sm whitespace-nowrap">New Chat</span>
           </div>
 
-          {/* Divider */}
-          {chats.length > 0 && (
-            <div className="h-6 w-px bg-gray-300 mx-2"></div>
-          )}
-          
-          {/* Chat Tabs */}
-          <div className="flex overflow-x-auto hide-scrollbar">
-            {chats.map(chat => {
-              // Format the date for the tab
-              const date = new Date(chat.lastUpdated);
-              const formattedDate = `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
-              
-              // Generate tab title
+        {sortedChats.map((chat) => {
+          const displayId = chat.id.replace('chat_', '');
               const tabTitle = chat.documentData?.type 
-                ? `${chat.documentData.type} - ${formattedDate}`
-                : `New Chat - ${formattedDate}`;
+            ? `${chat.documentData.type} - ${displayId}`
+            : `New Chat - ${displayId}`;
 
               return (
                 <div 
                   key={chat.id}
-                  className={`flex items-center px-4 py-2 mx-1 rounded-t-lg cursor-pointer transition-colors ${
-                    chat.id === currentChatId 
-                      ? 'bg-gray-100 text-gray-900 border-b-2 border-blue-600' 
-                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                  }`}
                   onClick={() => loadChat(chat.id)}
+              className={`flex items-center gap-2 px-4 py-2 border-r cursor-pointer whitespace-nowrap ${
+                currentChatId === chat.id
+                  ? 'bg-white border-b-2 border-b-blue-600'
+                  : 'hover:bg-gray-100'
+              }`}
                 >
-                  <span className="text-sm font-medium truncate max-w-[200px]">
-                    {tabTitle}
-                  </span>
+              <span className="text-sm">{tabTitle}</span>
                   <button 
                     onClick={(e) => {
                       e.stopPropagation();
                       confirmDeleteChat(chat.id);
                     }}
-                    className={`ml-2 p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-gray-200 transition-opacity ${
-                      chat.id === currentChatId ? 'opacity-100' : ''
-                    }`}
+                className="hover:bg-gray-200 rounded-full p-1"
                   >
-                    <X className="w-3 h-3" />
+                <X size={14} />
                   </button>
                 </div>
               );
             })}
-          </div>
-        </div>
-
-        {/* Add custom scrollbar styles */}
-        <style jsx>{`
-          .hide-scrollbar {
-            -ms-overflow-style: none;  /* IE and Edge */
-            scrollbar-width: none;     /* Firefox */
-          }
-          .hide-scrollbar::-webkit-scrollbar {
-            display: none;             /* Chrome, Safari and Opera */
-          }
-        `}</style>
       </div>
     );
   };
@@ -2960,76 +3358,93 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     
     socket.onopen = () => {
       console.log('WebSocket Connected');
-      // Remove any existing loading messages
-      setMessages(prev => prev.filter(msg => !msg.isLoading));
-      addMessageToChat({
-        type: 'bot',
-        content: 'Connected to server. Processing poster...',
-        timestamp: new Date().toISOString(),
-        isLoading: true
-      });
     };
 
     socket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      
-      if (data.status === 'error') {
-        // Remove loading message and show error
-        setMessages(prev => prev.filter(msg => !msg.isLoading));
-        addMessageToChat({
-          type: 'bot',
-          content: `Error: ${data.message}`,
-          timestamp: new Date().toISOString()
-        });
-        setIsProcessing(false);
-        setPosterProcessing(false);
-        return;
-      }
-
-      if (data.status === 'processing') {
-        // Update progress
-        setProcessingProgress(prev => [...prev, data]);
+      try {
+        const data = JSON.parse(event.data);
+        console.log('Received WebSocket message:', data); // Debug log
         
-        // Remove previous loading message and add new progress message
-        setMessages(prev => prev.filter(msg => !msg.isLoading));
-        addMessageToChat({
-          type: 'bot',
-          content: data.message,
-          timestamp: new Date().toISOString(),
-          isLoading: true
-        });
-      }
-
-      if (data.status === 'complete' || data.status === 'success') {
-        // Remove loading message
-        setMessages(prev => prev.filter(msg => !msg.isLoading));
-        
-        // Add completion message
-        addMessageToChat({
-          type: 'bot',
-          content: 'Poster processing complete! Starting document generation...',
-          timestamp: new Date().toISOString()
-        });
-
-        // Process the extracted data automatically
-        if (data.data) {
-          processExtractedData(data.data);
+        if (data.status === 'error') {
+          // Remove loading message and show error
+          setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
+          setMessages(prev => [...prev, {
+            id: Date.now(),
+            text: `Error: ${data.message}`,
+            isBot: true,
+            isError: true
+          }]);
+          setIsProcessing(false);
+          setPosterProcessing(false);
+          return;
         }
 
-        setIsProcessing(false);
-        setPosterProcessing(false);
+        if (data.status === 'processing') {
+          // Update the progress state
+          setProcessingProgress(prev => [...prev, data]);
+          
+          // Update the existing loading message with current status
+          setMessages(prev => {
+            const updatedMessages = [...prev];
+            const messageIndex = updatedMessages.findIndex(msg => msg.id === loadingMessageId);
+            
+            if (messageIndex !== -1) {
+              // Update existing message
+              updatedMessages[messageIndex] = {
+                ...updatedMessages[messageIndex],
+                text: `Current status: ${data.message}`,
+                isLoading: true,
+                loadingDots: true
+              };
+            } else {
+              // Add new message if not found
+              updatedMessages.push({
+                id: loadingMessageId,
+                text: `Current status: ${data.message}`,
+                isBot: true,
+                isLoading: true,
+                loadingDots: true
+              });
+            }
+            
+            return updatedMessages;
+          });
+        }
+
+        if (data.status === 'complete' || data.status === 'success') {
+          // Remove loading message
+          setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
+          
+          // Add completion message
+          setMessages(prev => [...prev, {
+            id: Date.now(),
+            text: 'Poster processing complete! Starting document generation...',
+            isBot: true
+          }]);
+
+          // Process the extracted data automatically
+          if (data.data) {
+            processExtractedData(data.data);
+          }
+
+          setIsProcessing(false);
+          setPosterProcessing(false);
+        }
+      } catch (error) {
+        console.error('Error processing WebSocket message:', error);
       }
     };
 
     socket.onerror = (error) => {
       console.error('WebSocket Error:', error);
       // Remove loading message and show error
-      setMessages(prev => prev.filter(msg => !msg.isLoading));
-      addMessageToChat({
-        type: 'bot',
-        content: 'Error connecting to the server. Please try again.',
-        timestamp: new Date().toISOString()
-      });
+      setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
+      setMessages(prev => [...prev, {
+        id: Date.now(),
+        text: 'Error connecting to the server. Please try again.',
+        isBot: true,
+        isError: true
+      }]);
       setIsProcessing(false);
       setPosterProcessing(false);
     };
@@ -3053,14 +3468,15 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     setPosterProcessing(true);
     setProcessingProgress([]);
 
-    // Add initial message to chat with loading state
-    addMessageToChat({
-      type: 'bot',
-      content: 'Starting poster processing...',
-      timestamp: new Date().toISOString(),
-      isLoading: true,
-      isLoader: true
-    });
+    // Add initial loading message to chat
+    const newLoadingMessageId = Date.now();
+    setLoadingMessageId(newLoadingMessageId);
+    setMessages(prev => [...prev, {
+      id: newLoadingMessageId,
+      text: '\nCurrent status: Starting poster processing',
+      isBot: true,
+      // isLoading: true
+    }]);
 
     try {
       // Connect to WebSocket
@@ -3070,7 +3486,7 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
       await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error('WebSocket connection timeout'));
-        }, 5000); // 5 second timeout
+        }, 5000);
 
         if (socket.readyState === WebSocket.OPEN) {
           clearTimeout(timeout);
@@ -3093,25 +3509,11 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(reader.result);
         } else {
-          // Remove loading message and show error
-          setMessages(prev => prev.filter(msg => !msg.isLoading));
-          addMessageToChat({
-            type: 'bot',
-            content: 'Error: WebSocket connection is not ready. Please try again.',
-            timestamp: new Date().toISOString()
-          });
           setPosterProcessing(false);
           setIsProcessing(false);
         }
       };
       reader.onerror = (error) => {
-        // Remove loading message and show error
-        setMessages(prev => prev.filter(msg => !msg.isLoading));
-        addMessageToChat({
-          type: 'bot',
-          content: `Error reading file: ${error.message}`,
-          timestamp: new Date().toISOString()
-        });
         setPosterProcessing(false);
         setIsProcessing(false);
       };
@@ -3120,12 +3522,13 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     } catch (error) {
       console.error('Error:', error);
       // Remove loading message and show error
-      setMessages(prev => prev.filter(msg => !msg.isLoading));
-      addMessageToChat({
-        type: 'bot',
-        content: `Error: ${error.message}`,
-        timestamp: new Date().toISOString()
-      });
+      setMessages(prev => prev.filter(msg => msg.id !== loadingMessageId));
+      setMessages(prev => [...prev, {
+        id: Date.now(),
+        text: 'Error processing poster. Please try again.',
+        isBot: true,
+        isError: true
+      }]);
       setPosterProcessing(false);
       setIsProcessing(false);
     }
@@ -3279,9 +3682,228 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     processFields();
   };
 
+  // ... existing code ...
+  // Add this style to your component's return statement
+  const loadingStyle = {
+    position: 'fixed',
+    bottom: '20px',
+    left: '20px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+    padding: '12px 20px',
+    backgroundColor: 'white',
+    borderRadius: '8px',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+    zIndex: 1000
+  };
+
+  const dotStyle = {
+    width: '10px',
+    height: '10px',
+    backgroundColor: '#3b82f6',
+    borderRadius: '50%',
+    animation: 'dotBounce 1.4s infinite ease-in-out'
+  };
+
+  // Add this to your component's return statement
+  const loadingMessage = (
+    <div style={loadingStyle}>
+      <div style={{...dotStyle, animationDelay: '0s'}}></div>
+      <div style={{...dotStyle, animationDelay: '0.2s'}}></div>
+      <div style={{...dotStyle, animationDelay: '0.4s'}}></div>
+    </div>
+  );
+
+  // ... existing code ...
+
+  // Helper function to convert HTML content to DOCX paragraphs
+  const convertHtmlToDocxParagraphs = (html) => {
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = html;
+    
+    const paragraphs = [];
+    
+    const processNode = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        // Handle text nodes
+        const text = node.textContent.trim();
+        return text ? new TextRun(text) : null;
+      }
+      
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const children = Array.from(node.childNodes)
+          .map(processNode)
+          .filter(Boolean)
+          .reduce((acc, curr) => {
+            // Handle arrays of children (from lists, etc.)
+            if (Array.isArray(curr)) {
+              acc.push(...curr);
+            } else {
+              acc.push(curr);
+            }
+            return acc;
+          }, []);
+
+        switch (node.tagName.toLowerCase()) {
+          case 'p':
+            // Add extra spacing between paragraphs
+            return new Paragraph({ 
+              children,
+              spacing: { after: 200 }
+            });
+          case 'div':
+            // Treat divs as paragraphs
+            return new Paragraph({ 
+              children,
+              spacing: { after: 200 }
+            });
+          case 'strong':
+          case 'b':
+            return new TextRun({ 
+              text: node.textContent,
+              bold: true 
+            });
+          case 'em':
+          case 'i':
+            return new TextRun({ 
+              text: node.textContent,
+              italics: true 
+            });
+          case 'u':
+            return new TextRun({ 
+              text: node.textContent,
+              underline: {} 
+            });
+          case 'br':
+            // Handle line breaks
+            return new TextRun({ 
+              text: '',
+              break: 1
+            });
+          case 'ul':
+            return children.map(child => 
+              new Paragraph({
+                bullet: { level: 0 },
+                children: [child],
+                spacing: { before: 100, after: 100 }
+              })
+            );
+          case 'ol':
+            return children.map((child, index) => 
+              new Paragraph({
+                numbering: {
+                  reference: 'default-numbering',
+                  level: 0
+                },
+                children: [child],
+                spacing: { before: 100, after: 100 }
+              })
+            );
+          case 'li':
+            // Process list items
+            if (children.length === 0) {
+              return new TextRun(node.textContent);
+            }
+            return children;
+          case 'span':
+            // Handle spans with potential styling
+            return children.length > 0 ? children : new TextRun(node.textContent);
+          default:
+            // Default case: wrap content in paragraph if it's not already
+            if (children.length === 0) {
+              const text = node.textContent.trim();
+              return text ? new Paragraph({ children: [new TextRun(text)] }) : null;
+            }
+            return new Paragraph({ children });
+        }
+      }
+      return null;
+    };
+
+    // Process all nodes and flatten the result
+    const processedNodes = Array.from(tempDiv.childNodes).map(processNode);
+    processedNodes.forEach(node => {
+      if (Array.isArray(node)) {
+        paragraphs.push(...node);
+      } else if (node) {
+        paragraphs.push(node);
+      }
+    });
+
+    // Add spacing between sections
+    return paragraphs.map(paragraph => {
+      if (paragraph instanceof Paragraph) {
+        return {
+          ...paragraph,
+          spacing: { ...paragraph.spacing, after: 200 }
+        };
+      }
+      return paragraph;
+    });
+  };
+
+  const generateDOCX = async () => {
+    if (editorRef.current) {
+      try {
+        // Create document with proper spacing settings
+        const doc = new Document({
+          sections: [{
+            properties: {
+              spacing: {
+                after: 200,
+                line: 360,
+                lineRule: 'auto'
+              }
+            },
+            children: [
+              // ... rest of your document generation code ...
+            ]
+          }]
+        });
+
+        // ... rest of your generateDOCX code ...
+      } catch (error) {
+        console.error('DOCX Generation Error:', error);
+        setMessages(prev => [
+          ...prev,
+          {
+            id: Date.now(),
+            text: 'Error generating DOCX. Please try again.',
+            isBot: true,
+            isError: true
+          }
+        ]);
+      }
+    }
+  };
+
+  // ... rest of your existing code ...
+
   // Modify the main component return to handle the case when no chat is selected
   return (
     <div className="h-screen w-screen overflow-hidden bg-gray-100">
+      {/* Add the loading animation style */}
+      <style>
+        {`
+          @keyframes bounce {
+            0%, 100% {
+              transform: translateY(0);
+              animation-timing-function: cubic-bezier(0.8, 0, 1, 1);
+            }
+            50% {
+              transform: translateY(-25%);
+              animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
+            }
+          }
+          .animate-bounce {
+            animation: bounce 1s infinite;
+          }
+        `}
+      </style>
+      {/* Show loading indicator when generating content or uploading poster */}
+      {/* {(isLoading || posterProcessing) && loadingMessage} */}
       {/* Add Joyride component for guided tour */}
       <Joyride
         callback={handleJoyrideCallback}
@@ -3443,5 +4065,19 @@ Or, if you have an existing PDF report, click the "Upload PDF" button below to e
     </div>
   );
 };
+
+// Add this component for the static bot profile with updated styling
+const BotProfile = React.memo(() => (
+  <div className="flex-shrink-0 w-10 h-10 rounded-full overflow-hidden mx-2 ring-2 ring-blue-500/20">
+    <img
+      src={`${process.env.PUBLIC_URL}/bot-avatar.png`}
+      alt="AI Assistant"
+      className="w-full h-full object-cover"
+      onError={(e) => {
+        e.target.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%234B5563"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>';
+      }}
+    />
+  </div>
+));
 
 export default DocumentGenerate; 
